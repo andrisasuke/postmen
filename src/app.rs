@@ -210,7 +210,26 @@ pub fn App() -> Element {
                     }
                     h1 { class: "app-title", "PostMen" }
                 }
-                div { class: "nimbus-cloud" }
+                div { class: "header-actions",
+                    button {
+                        class: "header-icon-btn",
+                        title: "Manage Hostnames",
+                        onclick: move |_| modal.set(ModalType::HostnameUniverse),
+                        svg {
+                            width: "18",
+                            height: "18",
+                            view_box: "0 0 24 24",
+                            fill: "none",
+                            stroke: "currentColor",
+                            stroke_width: "2",
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            circle { cx: "12", cy: "12", r: "10" }
+                            line { x1: "2", y1: "12", x2: "22", y2: "12" }
+                            path { d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" }
+                        }
+                    }
+                }
             }
 
             // Main content
@@ -401,12 +420,25 @@ pub fn App() -> Element {
                             div {
                                 class: if *is_resizing.read() { "editor-content-area resizing" } else { "editor-content-area" },
                                 onmousemove: move |e: Event<MouseData>| {
-                                    if *is_resizing.read() {
-                                        let mouse_x = e.client_coordinates().x as i32;
-                                        let delta = *resize_start_x.read() - mouse_x;
-                                        let new_width = *resize_start_width.read() + delta;
-                                        let clamped_width = new_width.max(380).min(1400);
-                                        response_panel_width.set(clamped_width);
+                                    if !*is_resizing.read() {
+                                        return;
+                                    }
+                                    e.prevent_default();
+                                    e.stop_propagation();
+                                    let current_width = *response_panel_width.read();
+                                    let mouse_x = e.client_coordinates().x as i32;
+                                    let start_x = *resize_start_x.read();
+                                    let start_width = *resize_start_width.read();
+                                    let delta = start_x - mouse_x;
+                                    let new_width = (start_width + delta).max(380).min(800);
+
+                                    if current_width != new_width {
+                                        response_panel_width.set(new_width);
+                                        // Reset anchor when hitting boundary
+                                        if new_width == 800 || new_width == 380 {
+                                            resize_start_x.set(mouse_x);
+                                            resize_start_width.set(new_width);
+                                        }
                                     }
                                 },
                                 onmouseup: move |_| {
@@ -473,8 +505,22 @@ pub fn App() -> Element {
                                                     .map(|h| (h.key.clone(), h.value.clone()))
                                                     .collect();
 
-                                                let body = if req.body.is_empty() { None } else { Some(req.body.as_str()) };
-                                                match HttpService::send_request(req.method, &url_with_params, &headers, body).await {
+                                                // Send request based on body type
+                                                let result = match req.body_type {
+                                                    BodyType::MultipartFormData => {
+                                                        HttpService::send_multipart_request(
+                                                            req.method,
+                                                            &url_with_params,
+                                                            &headers,
+                                                            &req.form_data,
+                                                        ).await
+                                                    }
+                                                    BodyType::Json => {
+                                                        let body = if req.body.is_empty() { None } else { Some(req.body.as_str()) };
+                                                        HttpService::send_request(req.method, &url_with_params, &headers, body).await
+                                                    }
+                                                };
+                                                match result {
                                                     Ok(res) => {
                                                         // Only update if this request wasn't cancelled
                                                         let is_valid = *request_generations.read().get(&req_id).unwrap_or(&0) == current_gen;
@@ -523,6 +569,7 @@ pub fn App() -> Element {
                                                 let _ = db.update_request(&req);
                                                 let _ = db.save_request_params(&req.id, &req.params);
                                                 let _ = db.save_request_headers(&req.id, &req.headers);
+                                                let _ = db.save_form_data_fields(&req.id, &req.form_data);
 
                                                 let mut t = tabs.write();
                                                 if let Some(tab) = t.iter_mut().find(|t| t.request_id == req.id) {
@@ -886,6 +933,7 @@ pub fn App() -> Element {
                                         let _ = db.update_request(&req);
                                         let _ = db.save_request_params(&req.id, &req.params);
                                         let _ = db.save_request_headers(&req.id, &req.headers);
+                                        let _ = db.save_form_data_fields(&req.id, &req.form_data);
 
                                         // Close the tab after saving
                                         let mut t = tabs.read().clone();
@@ -962,6 +1010,7 @@ pub fn App() -> Element {
                                                     let _ = db.update_request(&req);
                                                     let _ = db.save_request_params(&req.id, &req.params);
                                                     let _ = db.save_request_headers(&req.id, &req.headers);
+                                                    let _ = db.save_form_data_fields(&req.id, &req.form_data);
 
                                                     // Mark tab as not dirty
                                                     {

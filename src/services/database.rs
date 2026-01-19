@@ -76,6 +76,18 @@ impl Database {
                 FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS form_data_fields (
+                id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL DEFAULT '',
+                description TEXT DEFAULT '',
+                field_type TEXT NOT NULL DEFAULT 'Text' CHECK(field_type IN ('Text', 'File')),
+                enabled INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS hostnames (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -118,6 +130,18 @@ impl Database {
         // Migration: Add description column to request_headers if it doesn't exist
         let _ = conn.execute(
             "ALTER TABLE request_headers ADD COLUMN description TEXT DEFAULT ''",
+            [],
+        );
+
+        // Migration: Add body_type column to requests if it doesn't exist
+        let _ = conn.execute(
+            "ALTER TABLE requests ADD COLUMN body_type TEXT DEFAULT 'Json'",
+            [],
+        );
+
+        // Migration: Add description column to form_data_fields if it doesn't exist
+        let _ = conn.execute(
+            "ALTER TABLE form_data_fields ADD COLUMN description TEXT DEFAULT ''",
             [],
         );
 
@@ -201,10 +225,11 @@ impl Database {
     pub fn get_requests_by_project(&self, project_id: &str) -> Result<Vec<Request>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, name, method, path, hostname_id, body, created_at, updated_at, sort_order
+            "SELECT id, project_id, name, method, path, hostname_id, body, created_at, updated_at, sort_order, body_type
              FROM requests WHERE project_id = ?1 ORDER BY sort_order"
         )?;
         let requests = stmt.query_map([project_id], |row| {
+            let body_type_str: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "Json".to_string());
             Ok(Request {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
@@ -213,11 +238,13 @@ impl Database {
                 path: row.get(4)?,
                 hostname_id: row.get(5)?,
                 body: row.get(6)?,
+                body_type: BodyType::from_str(&body_type_str),
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
                 sort_order: row.get(9)?,
                 params: Vec::new(),
                 headers: Vec::new(),
+                form_data: Vec::new(),
             })
         })?;
         requests.collect()
@@ -226,12 +253,13 @@ impl Database {
     pub fn get_request_by_id(&self, id: &str) -> Result<Option<Request>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, project_id, name, method, path, hostname_id, body, created_at, updated_at, sort_order
+            "SELECT id, project_id, name, method, path, hostname_id, body, created_at, updated_at, sort_order, body_type
              FROM requests WHERE id = ?1"
         )?;
         let mut rows = stmt.query([id])?;
 
         if let Some(row) = rows.next()? {
+            let body_type_str: String = row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "Json".to_string());
             let mut request = Request {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
@@ -240,11 +268,13 @@ impl Database {
                 path: row.get(4)?,
                 hostname_id: row.get(5)?,
                 body: row.get(6)?,
+                body_type: BodyType::from_str(&body_type_str),
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
                 sort_order: row.get(9)?,
                 params: Vec::new(),
                 headers: Vec::new(),
+                form_data: Vec::new(),
             };
             drop(rows);
             drop(stmt);
@@ -252,6 +282,7 @@ impl Database {
 
             request.params = self.get_request_params(&request.id)?;
             request.headers = self.get_request_headers(&request.id)?;
+            request.form_data = self.get_form_data_fields(&request.id)?;
 
             Ok(Some(request))
         } else {
@@ -262,8 +293,8 @@ impl Database {
     pub fn create_request(&self, request: &Request) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO requests (id, project_id, name, method, path, hostname_id, body, created_at, updated_at, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO requests (id, project_id, name, method, path, hostname_id, body, body_type, created_at, updated_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 request.id,
                 request.project_id,
@@ -272,6 +303,7 @@ impl Database {
                 request.path,
                 request.hostname_id,
                 request.body,
+                request.body_type.db_value(),
                 request.created_at,
                 request.updated_at,
                 request.sort_order
@@ -284,13 +316,14 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE requests SET name = ?1, method = ?2, path = ?3, hostname_id = ?4, body = ?5, updated_at = ?6, sort_order = ?7 WHERE id = ?8",
+            "UPDATE requests SET name = ?1, method = ?2, path = ?3, hostname_id = ?4, body = ?5, body_type = ?6, updated_at = ?7, sort_order = ?8 WHERE id = ?9",
             params![
                 request.name,
                 request.method.as_str(),
                 request.path,
                 request.hostname_id,
                 request.body,
+                request.body_type.db_value(),
                 now,
                 request.sort_order,
                 request.id
@@ -385,6 +418,56 @@ impl Database {
                     header.description,
                     if header.enabled { 1 } else { 0 },
                     header.sort_order
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    // ===== FORM DATA FIELDS =====
+    pub fn get_form_data_fields(&self, request_id: &str) -> Result<Vec<FormDataField>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, request_id, key, value, description, field_type, enabled, sort_order
+             FROM form_data_fields WHERE request_id = ?1 ORDER BY sort_order"
+        )?;
+        let fields = stmt.query_map([request_id], |row| {
+            let field_type_str: String = row.get(5)?;
+            Ok(FormDataField {
+                id: row.get(0)?,
+                request_id: row.get(1)?,
+                key: row.get(2)?,
+                value: row.get(3)?,
+                description: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                field_type: if field_type_str == "File" { FormFieldType::File } else { FormFieldType::Text },
+                enabled: row.get::<_, i32>(6)? == 1,
+                sort_order: row.get(7)?,
+            })
+        })?;
+        fields.collect()
+    }
+
+    pub fn save_form_data_fields(&self, request_id: &str, fields: &[FormDataField]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM form_data_fields WHERE request_id = ?1", params![request_id])?;
+
+        for field in fields {
+            let field_type_str = match field.field_type {
+                FormFieldType::Text => "Text",
+                FormFieldType::File => "File",
+            };
+            conn.execute(
+                "INSERT INTO form_data_fields (id, request_id, key, value, description, field_type, enabled, sort_order)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    field.id,
+                    request_id,
+                    field.key,
+                    field.value,
+                    field.description,
+                    field_type_str,
+                    if field.enabled { 1 } else { 0 },
+                    field.sort_order
                 ],
             )?;
         }

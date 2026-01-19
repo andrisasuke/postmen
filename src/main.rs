@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use dioxus::desktop::{Config, WindowBuilder, WindowCloseBehaviour, tao::window::Icon};
-use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu, accelerator::{Code, Modifiers, Accelerator}};
+use dioxus::desktop::muda::{Menu, MenuItem, PredefinedMenuItem, Submenu, accelerator::{Code, Modifiers, Accelerator}};
 
 mod app;
 mod components;
@@ -82,7 +82,7 @@ fn main() {
 
     let config = Config::new()
         .with_window(window_builder)
-        .with_close_behaviour(WindowCloseBehaviour::LastWindowHides)
+        .with_close_behaviour(WindowCloseBehaviour::WindowHides)
         .with_menu(create_menu());
 
     dioxus::LaunchBuilder::desktop()

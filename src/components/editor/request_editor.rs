@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::models::{Request, RequestParam, RequestHeader};
+use crate::models::{Request, RequestParam, RequestHeader, BodyType, FormDataField};
 use crate::state::EditorTab;
 use crate::services::HttpService;
 use super::{ParamsTab, HeadersTab, BodyTab};
@@ -51,9 +51,10 @@ pub fn RequestEditor(
                         disabled: is_loading,
                         onclick: {
                             let body = request.body.clone();
+                            let body_type = request.body_type;
                             move |_| {
-                                // Validate JSON if body is not empty
-                                if !body.trim().is_empty() {
+                                // Only validate JSON if body type is JSON and body is not empty
+                                if body_type == BodyType::Json && !body.trim().is_empty() {
                                     match HttpService::format_json_with_line(&body) {
                                         Ok(_) => {
                                             json_error.set(None);
@@ -120,6 +121,8 @@ pub fn RequestEditor(
                     EditorTab::Body => rsx! {
                         BodyTab {
                             body: request.body.clone(),
+                            body_type: request.body_type,
+                            form_data: request.form_data.clone(),
                             json_error: json_error.read().clone(),
                             error_line: *error_line.read(),
                             on_update: {
@@ -129,6 +132,22 @@ pub fn RequestEditor(
                                     error_line.set(None);
                                     let mut r = req.clone();
                                     r.body = body;
+                                    on_update_request.call(r);
+                                }
+                            },
+                            on_body_type_change: {
+                                let req = request.clone();
+                                move |body_type: BodyType| {
+                                    let mut r = req.clone();
+                                    r.body_type = body_type;
+                                    on_update_request.call(r);
+                                }
+                            },
+                            on_form_data_change: {
+                                let req = request.clone();
+                                move |form_data: Vec<FormDataField>| {
+                                    let mut r = req.clone();
+                                    r.form_data = form_data;
                                     on_update_request.call(r);
                                 }
                             },
