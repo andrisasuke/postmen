@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discard-collection-import"
+description = "Enables the discard_collection_import command without any pre-configured scope."
+commands.allow = ["discard_collection_import"]
+
+[[permission]]
+identifier = "deny-discard-collection-import"
+description = "Denies the discard_collection_import command without any pre-configured scope."
+commands.deny = ["discard_collection_import"]

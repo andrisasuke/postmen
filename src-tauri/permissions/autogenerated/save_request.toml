@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-request"
+description = "Enables the save_request command without any pre-configured scope."
+commands.allow = ["save_request"]
+
+[[permission]]
+identifier = "deny-save-request"
+description = "Denies the save_request command without any pre-configured scope."
+commands.deny = ["save_request"]

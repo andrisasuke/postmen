@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-collection-import"
+description = "Enables the preview_collection_import command without any pre-configured scope."
+commands.allow = ["preview_collection_import"]
+
+[[permission]]
+identifier = "deny-preview-collection-import"
+description = "Denies the preview_collection_import command without any pre-configured scope."
+commands.deny = ["preview_collection_import"]

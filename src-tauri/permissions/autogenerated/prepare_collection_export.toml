@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-collection-export"
+description = "Enables the prepare_collection_export command without any pre-configured scope."
+commands.allow = ["prepare_collection_export"]
+
+[[permission]]
+identifier = "deny-prepare-collection-export"
+description = "Denies the prepare_collection_export command without any pre-configured scope."
+commands.deny = ["prepare_collection_export"]

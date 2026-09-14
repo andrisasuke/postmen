@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-attachment"
+description = "Enables the pick_attachment command without any pre-configured scope."
+commands.allow = ["pick_attachment"]
+
+[[permission]]
+identifier = "deny-pick-attachment"
+description = "Denies the pick_attachment command without any pre-configured scope."
+commands.deny = ["pick_attachment"]

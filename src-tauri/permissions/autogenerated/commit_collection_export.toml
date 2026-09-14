@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-collection-export"
+description = "Enables the commit_collection_export command without any pre-configured scope."
+commands.allow = ["commit_collection_export"]
+
+[[permission]]
+identifier = "deny-commit-collection-export"
+description = "Denies the commit_collection_export command without any pre-configured scope."
+commands.deny = ["commit_collection_export"]
