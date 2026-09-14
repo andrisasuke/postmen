@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-default-workspace"
+description = "Enables the set_default_workspace command without any pre-configured scope."
+commands.allow = ["set_default_workspace"]
+
+[[permission]]
+identifier = "deny-set-default-workspace"
+description = "Denies the set_default_workspace command without any pre-configured scope."
+commands.deny = ["set_default_workspace"]

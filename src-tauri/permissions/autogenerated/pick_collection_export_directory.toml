@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-collection-export-directory"
+description = "Enables the pick_collection_export_directory command without any pre-configured scope."
+commands.allow = ["pick_collection_export_directory"]
+
+[[permission]]
+identifier = "deny-pick-collection-export-directory"
+description = "Denies the pick_collection_export_directory command without any pre-configured scope."
+commands.deny = ["pick_collection_export_directory"]

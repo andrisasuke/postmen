@@ -1,0 +1,49 @@
+fn main() {
+    // Context codegen caches icon bytes; track the originals so asset-only
+    // changes also rebuild the embedded macOS development Dock icon.
+    println!("cargo:rerun-if-changed=icons");
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "bootstrap_app",
+            "load_workspace",
+            "list_workspaces",
+            "create_workspace",
+            "select_workspace",
+            "set_default_workspace",
+            "delete_workspace",
+            "create_collection",
+            "rename_collection",
+            "delete_collection",
+            "create_folder",
+            "update_folder",
+            "delete_folder",
+            "create_request",
+            "get_request",
+            "save_request",
+            "delete_request",
+            "reorder_items",
+            "save_environment",
+            "delete_environment",
+            "select_environment",
+            "save_session",
+            "pick_attachment",
+            "pick_collection_import",
+            "preview_collection_import",
+            "commit_collection_import",
+            "discard_collection_import",
+            "prepare_collection_export",
+            "pick_collection_export_directory",
+            "commit_collection_export",
+            "discard_collection_export",
+            "prepare_execution",
+            "execute_request",
+            "cancel_request",
+            "list_history",
+            "close_guard_ready",
+            "cancel_quit",
+            "finish_quit",
+            "start_titlebar_drag",
+        ]),
+    ))
+    .expect("failed to build PostMen desktop resources");
+}

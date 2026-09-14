@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rename-collection"
+description = "Enables the rename_collection command without any pre-configured scope."
+commands.allow = ["rename_collection"]
+
+[[permission]]
+identifier = "deny-rename-collection"
+description = "Denies the rename_collection command without any pre-configured scope."
+commands.deny = ["rename_collection"]

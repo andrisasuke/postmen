@@ -1,0 +1,21 @@
+{
+  "build": { "beforeDevCommand": "" },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PostMen Native Smoke",
+        "width": 1440,
+        "height": 840,
+        "minWidth": 700,
+        "minHeight": 400,
+        "center": true,
+        "incognito": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 12, "y": 20 },
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

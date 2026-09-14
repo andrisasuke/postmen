@@ -1,0 +1,56 @@
+[package]
+name = "postmen-desktop"
+version = "0.2.0"
+description = "PostMen desktop REST client"
+authors = ["PostMen contributors"]
+edition = "2021"
+rust-version = "1.85.0"
+default-run = "Postmen"
+
+[[bin]]
+name = "Postmen"
+path = "src/main.rs"
+
+[lib]
+name = "postmen_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+tauri-plugin-dialog = "2.7.3"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "multipart", "gzip", "deflate", "brotli", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "io-util", "net"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+encoding_rs = "0.8"
+rustls = { version = "0.23", default-features = false }
+tauri-plugin-window-state = "2.4.1"
+tempfile = "3"
+
+[dev-dependencies]
+flate2 = "1"
+brotli = "8"
+
+# Opt-in native rendering QA; absent from normal development/release builds.
+[features]
+native-smoke = ["objc2-app-kit/NSImage", "dep:objc2-web-kit", "dep:objc2-foundation"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.4" }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent", "NSWindow", "block2"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWebView", "WKSnapshotConfiguration", "block2"], optional = true }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSError"], optional = true }
+block2 = { version = "0.6.2" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

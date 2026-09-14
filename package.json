@@ -1,0 +1,31 @@
+{
+  "name": "postmen-workspace",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["frontend"],
+  "engines": { "node": ">=22.22.2 <23 || >=24.15.0" },
+  "scripts": {
+    "dev": "npm run dev --workspace frontend",
+    "build": "npm run build --workspace frontend",
+    "typecheck": "npm run typecheck --workspace frontend",
+    "lint": "npm run lint --workspace frontend",
+    "test": "npm run test --workspace frontend",
+    "test:e2e": "playwright test",
+    "test:production": "npm run build && node scripts/verify-production.mjs",
+    "capture:m1": "node scripts/capture-m1.mjs",
+    "capture:m4": "node scripts/capture-m4.mjs",
+    "test:native:visual": "node scripts/smoke-m4-visual.mjs",
+    "verify:m4": "node scripts/verify-m4.mjs",
+    "compare:m4": "node scripts/compare-m4.mjs",
+    "test:bundle": "node scripts/smoke-macos-bundle.mjs",
+    "test:native": "node scripts/smoke-m3-native.mjs",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

@@ -1,0 +1,44 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Edit these stops to change the background colors -->
+    <linearGradient id="bg" x1="120" y1="100" x2="920" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#000000"/>
+      <stop offset="50%" stop-color="#000000"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+
+    <!-- Main icon color -->
+    <linearGradient id="plane" x1="430" y1="360" x2="820" y2="730" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8BE2FA"/>
+      <stop offset="100%" stop-color="#8BE2FA"/>
+    </linearGradient>
+
+    <!-- Fold accent color -->
+    <linearGradient id="fold" x1="600" y1="480" x2="800" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#68CDE9"/>
+      <stop offset="100%" stop-color="#8BE2FA"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="64" y="64" width="896" height="896" rx="190" fill="url(#bg)"/>
+
+  <!-- Motion lines -->
+  <g fill="#8BE2FA">
+    <rect x="210" y="455" width="160" height="42" rx="21"/>
+    <rect x="150" y="520" width="260" height="42" rx="21"/>
+    <rect x="220" y="585" width="145" height="42" rx="21"/>
+  </g>
+
+  <!-- Paper-plane / send symbol -->
+  <path
+    d="M392 421C384 404 394 385 412 380L812 275C836 269 857 293 846 315L655 704C643 729 610 733 592 712L508 612C500 602 499 589 505 578L554 489L407 445C400 443 395 436 392 421Z"
+    fill="url(#plane)"
+  />
+
+  <!-- Fold -->
+  <path
+    d="M556 490L842 304L655 704C643 729 610 733 592 712L508 612L556 490Z"
+    fill="url(#fold)"
+  />
+</svg>

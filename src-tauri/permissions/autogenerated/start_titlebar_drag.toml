@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-titlebar-drag"
+description = "Enables the start_titlebar_drag command without any pre-configured scope."
+commands.allow = ["start_titlebar_drag"]
+
+[[permission]]
+identifier = "deny-start-titlebar-drag"
+description = "Denies the start_titlebar_drag command without any pre-configured scope."
+commands.deny = ["start_titlebar_drag"]

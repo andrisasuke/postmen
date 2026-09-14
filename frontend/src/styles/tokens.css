@@ -1,0 +1,99 @@
+/* Semantic colors and geometry include MIT-licensed adaptations; attribution is retained in THIRD_PARTY_NOTICES.md.
+   PostMen primary accent customized to #8BE2FA.
+   See THIRD_PARTY_NOTICES.md and docs/UI_BASELINE.md. */
+:root {
+  font-size: 16px;
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-code: "Fira Code", monospace;
+  --titlebar-height: 36px;
+  --statusbar-height: 24px;
+  --split-gutter: 12px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+}
+:root,
+:root[data-theme="light"] {
+  --bg: #fff;
+  --sidebar-bg: #f8f8f8;
+  --mantle: #f8f8f8;
+  --surface: #f1f1f1;
+  --hover: #eaeaea;
+  --tab-inactive: #f6f6f6;
+  --tab-close-color: #9b9b9b;
+  --tab-close-hover: #eaeaea;
+  --text: #343434;
+  --muted: #838383;
+  --subtle: #9b9b9b;
+  --primary: #8be2fa;
+  --primary-text: #8be2fa;
+  --primary-contrast: #000;
+  --toast-bg: #fff;
+  --toast-success: #458d27;
+  --toast-error: #d84343;
+  --border-strong: #ccc;
+  --border: #e5e5e5;
+  --border-subtle: #efefef;
+  --menu-bg: #fff;
+  --menu-hover: #f6f6f6;
+  --modal-bg: #fff;
+  --overlay: rgb(0 0 0 / 40%);
+  --shadow: 0 0 3px rgb(0 0 0 / 12%), 0 0 0 1px rgb(0 0 0 / 5%);
+  --link: hsl(214 55% 45%);
+  --get: hsl(145 50% 36%);
+  --post: hsl(280 45% 48%);
+  --put: hsl(35 85% 42%);
+  --patch: hsl(280 45% 48%);
+  --delete: hsl(8 60% 52%);
+  --head: hsl(195 55% 42%);
+  --options: hsl(178 50% 36%);
+  --syntax-property: hsl(214 55% 45%);
+  --syntax-string: hsl(28 55% 38%);
+  --syntax-atom: hsl(352 45% 50%);
+  --syntax-number: hsl(328 50% 48%);
+  --status-text: #646464;
+  --code-text: #000;
+  --code-gutter: #999;
+}
+:root[data-theme="dark"] {
+  --bg: #1a1a1a;
+  --sidebar-bg: #1a1a1a;
+  --mantle: #222224;
+  --surface: #26292b;
+  --hover: #26292b;
+  --tab-inactive: #26292b;
+  --tab-close-color: #9f9f9f;
+  --tab-close-hover: #080808;
+  --text: #ccc;
+  --muted: #aaa;
+  --subtle: #999;
+  --primary: #8be2fa;
+  --primary-text: #8be2fa;
+  --primary-contrast: #000;
+  --toast-bg: #333;
+  --toast-success: #79cc50;
+  --toast-error: #e45b5b;
+  --border-strong: #444;
+  --border: #333;
+  --border-subtle: #2a2a2a;
+  --menu-bg: #222224;
+  --menu-hover: #333;
+  --modal-bg: #222224;
+  --overlay: rgb(0 0 0 / 60%);
+  --shadow: 0 0 3px rgb(0 0 0 / 50%), 0 0 0 1px rgb(0 0 0 / 30%);
+  --link: hsl(210 90% 76%);
+  --get: hsl(140 72% 68%);
+  --post: hsl(202 88% 72%);
+  --put: hsl(24 88% 72%);
+  --patch: hsl(24 88% 72%);
+  --delete: hsl(8 70% 60%);
+  --head: hsl(190 82% 72%);
+  --options: hsl(170 70% 60%);
+  --syntax-property: hsl(210 90% 76%);
+  --syntax-string: hsl(35 65% 72%);
+  --syntax-atom: hsl(367 84% 70%);
+  --syntax-number: hsl(305 59% 74%);
+  --status-text: #a9a9a9;
+  --code-text: #f8f8f2;
+  --code-gutter: #d0d0d0;
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-request"
+description = "Enables the get_request command without any pre-configured scope."
+commands.allow = ["get_request"]
+
+[[permission]]
+identifier = "deny-get-request"
+description = "Denies the get_request command without any pre-configured scope."
+commands.deny = ["get_request"]
