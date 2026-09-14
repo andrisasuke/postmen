@@ -1,5 +1,7 @@
 # Repository guidance
 
+September 14 notice follow-up: the user requested removal of the shell-reference MIT section from `THIRD_PARTY_NOTICES.md` after removal of its separate license file. That text is no longer in the current working tree; do not claim its attribution is still bundled or that licensing has been cleared. Other dependency notices and historical docs/bundles/hashes remain unchanged. The original notice remains recoverable from Git history.
+
 September 14, 2026 documentation sync: current behavior is documented in `docs/CURRENT_STATE.md`, `docs/WORKSPACES_AND_STORAGE.md`, `docs/COLLECTION_IMPORT_EXPORT.md`, `docs/DEVELOPMENT_AND_QA.md` and the updated `docs/IPC_CONTRACT.md`, indexed by `PostMen/00 - PostMen.md` in Obsidian. Read those first for current behavior; the chronological notes below and original plan/acceptance matrix retain superseded decisions. Startup opens the default workspace; workspace management supports recoverable deletion, with the sidebar retained. IPC remains 5/SQLite 2/catalog 1. The user reported “sudah ok” after self-testing, without a per-case QA report. This is not a new automated runtime or cross-monitor acceptance result. Historical evidence remains unchanged; docs stay ignored and build-independent.
 
 PostMen is being rewritten as a Tauri 2 desktop application with Vue 3, strict TypeScript, Vite, and Pinia. The archived desktop v4.1.0 baseline is the visual reference. Product identity stays PostMen.

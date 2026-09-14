@@ -1,6 +1,6 @@
 # Third-party notices
 
-PostMen's shell adapts visual tokens and layout measurements from Bruno v4.1.0, commit `eeff774e95afc5de5f8b7bf9e201c474f9299516`. Bruno's MIT copyright and permission notice are retained in `licenses/Bruno-MIT.txt`. PostMen is a separate product; the Bruno logo and promotional assets are not used as its identity.
+PostMen's shell adapts visual tokens and layout measurements from an MIT-licensed desktop UI reference, version 4.1.0, commit `eeff774e95afc5de5f8b7bf9e201c474f9299516`. PostMen is a separate product and does not use the reference product's logo or promotional assets as its identity.
 
 Bundled UI assets and runtime libraries:
 
@@ -34,5 +34,3 @@ The collection-export follow-up promotes the existing locked tempfile dependency
 Twenty published crates omitted standalone notice files. Supplements were recovered from their `.cargo_vcs_info.json` repository revisions and retained with URL/SHA256 in `docs/milestones/M4/notice-sources/sources.json`. The objc2 family publishes licensing context rather than complete standalone license/copyright files: its original Apple-SDK licensing caveat and standard MIT terms are included, with package-author metadata identified as such. No copyright attribution was invented. This inventory is not legal clearance; review these upstream caveats before public distribution.
 
 Unmodified MPL-2.0 components (cssparser, cssparser-macros, dtoa-short, option-ext, selectors) retain their terms; exact upstream source archive addresses are provided per package in `DEPENDENCIES.txt`. CodeMirror 6 is bundled starting in M2; M1's preview and all development fixtures are excluded from production. SQLite is bundled through libsqlite3-sys (public-domain SQLite core; the rusqlite wrapper notice is retained).
-
-The PostMen P icon in `src-tauri/icons/source.svg` is project-original artwork. Generated platform variants come from that SVG.
