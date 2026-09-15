@@ -169,6 +169,6 @@ onBeforeUnmount(() => { disposed = true; forget(); });
 .export-browse:disabled { opacity: .5; cursor: default; }
 .collection-export-body details { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .collection-export-body summary { cursor: pointer; }
-.collection-export-body li, .export-diagnostic { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.collection-export-body li, .export-diagnostic { white-space: pre-wrap; overflow-wrap: anywhere; }
 .export-overwrite { padding: 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--delete); border-radius: 6px; }
 </style>

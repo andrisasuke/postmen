@@ -164,7 +164,6 @@
   padding: 6px 8px;
   text-align: left !important;
   overflow-wrap: anywhere;
-  user-select: text;
 }
 .quit-drafts {
   max-height: 160px;

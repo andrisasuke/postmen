@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
 .import-collection-dialog .modal-body { min-height: 0; overflow-y: auto; }
 .collection-import-body { display: flex; flex-direction: column; gap: 16px; font-size: 13px; }
 .collection-import-body p { margin: 0; line-height: 1.5; }
-.import-diagnostic, .collection-import-preview li { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.import-diagnostic, .collection-import-preview li { white-space: pre-wrap; overflow-wrap: anywhere; }
 .collection-dropzone { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 16px; border: 1px dashed var(--border-strong); border-radius: 6px; color: var(--text); background: transparent; cursor: pointer; }
 .collection-dropzone:hover:not(:disabled), .collection-dropzone.dragging { border-color: var(--primary); background: var(--hover); }
 .collection-dropzone:disabled { cursor: default; opacity: .65; }

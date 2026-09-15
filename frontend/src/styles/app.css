@@ -13,6 +13,19 @@ body {
   font: 400 13px/1.5 var(--font-ui);
   color: var(--text);
   background: var(--bg);
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Keep native text editing and copying available inside text controls,
+   including CodeMirror's read-only response content. */
+input,
+textarea,
+[contenteditable=""],
+[contenteditable="true"],
+[contenteditable="plaintext-only"],
+.cm-content {
+  -webkit-user-select: text;
+  user-select: text;
 }
 button,
 input {
@@ -68,6 +81,7 @@ pre {
 }
 .resizing,
 .resizing * {
+  -webkit-user-select: none !important;
   user-select: none !important;
   cursor: col-resize !important;
 }
@@ -956,7 +970,6 @@ pre {
   margin: 16px 16px 0;
   overflow: auto;
   padding: 5px 0 8px;
-  user-select: text;
 }
 .code-line {
   display: flex;
