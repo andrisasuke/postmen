@@ -103,7 +103,7 @@ it("cancels without importing and discards staged data on unmount", async () => 
   wrapper.unmount();
   expect(api.discard).toHaveBeenCalledWith("token");
 });
-it("shows multiline variable diagnostics as selectable plain text without enabling import", async () => {
+it("shows multiline variable diagnostics as plain text without enabling import", async () => {
   const message = 'Collection "My API" > Collection variables\nVariable #2 "bad name": Spaces are not allowed.\nReferenced by:\n- Folder "Users" > Request "<script>" — Headers (item[0].item[0].request)';
   api.pick.mockRejectedValueOnce(new Error(message));
   await pick();

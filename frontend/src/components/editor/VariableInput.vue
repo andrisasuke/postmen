@@ -251,7 +251,7 @@ defineExpose({ focus: () => input.value?.focus() });
 .variable-suggestions [role="option"] { display: flex; gap: 12px; justify-content: space-between; padding: 7px 10px; border-radius: 4px; cursor: pointer; }
 .variable-suggestions .highlighted { background: var(--hover); }
 .variable-suggestions small { color: var(--muted); }
-.variable-value-tooltip { position: fixed; z-index: 125; width: max-content; max-width: min(420px, calc(100vw - 16px)); max-height: min(240px, calc(100dvh - 16px)); overflow: auto; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--menu-bg); color: var(--text); box-shadow: var(--shadow); font-size: 12px; line-height: 1.5; user-select: text; }
+.variable-value-tooltip { position: fixed; z-index: 125; width: max-content; max-width: min(420px, calc(100vw - 16px)); max-height: min(240px, calc(100dvh - 16px)); overflow: auto; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--menu-bg); color: var(--text); box-shadow: var(--shadow); font-size: 12px; line-height: 1.5; }
 .variable-tooltip-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 5px; }
 .variable-tooltip-heading > span { overflow-wrap: anywhere; min-width: 0; font-weight: 600; }
 .variable-tooltip-heading small { color: var(--muted); flex-shrink: 0; }
