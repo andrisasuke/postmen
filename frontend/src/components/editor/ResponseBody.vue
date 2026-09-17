@@ -23,6 +23,7 @@ function state() {
     extensions: [
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
+      EditorView.lineWrapping,
       lineNumbers(),
       search({ top: true }),
       keymap.of([...searchKeymap, ...foldKeymap]),
