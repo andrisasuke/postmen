@@ -71,6 +71,7 @@ function freshState() {
     ),
     extensions: [
       json(),
+      EditorView.lineWrapping,
       history(),
       lineNumbers(),
       drawSelection(),
