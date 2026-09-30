@@ -21,6 +21,7 @@ import ResponsePanel from "./ResponsePanel.vue";
 import { useExecutionStore } from "../stores/execution";
 import { useRequestQuery } from "../composables/useRequestQuery";
 const props = defineProps<{ id: string }>();
+const emit = defineEmits<{ "generate-code": [id: string] }>();
 const editor = ref<InstanceType<typeof CodeEditor>>();
 const store = useWorkspaceStore();
 const executions = useExecutionStore();
@@ -63,6 +64,14 @@ function editorAction(id: string) {
   if (id === "fold") editor.value?.fold();
   if (id === "unfold") editor.value?.unfold();
 }
+function generateCode(event: MouseEvent) {
+  if (store.environmentBusy) return;
+  // WebKit does not always focus a button on pointer activation. UiModal
+  // restores the active element, so make the opener explicit before emitting.
+  if (event.currentTarget instanceof HTMLElement)
+    event.currentTarget.focus({ preventScroll: true });
+  emit("generate-code", props.id);
+}
 </script>
 <template>
   <div v-if="tab" class="request-editor">
@@ -86,6 +95,14 @@ function editorAction(id: string) {
           :variables="variables"
         />
         <IconButton
+          label="Generate cURL"
+          icon="code"
+          :disabled="store.environmentBusy"
+          @click="generateCode"
+        />
+        <IconButton
+          class="save-request-button"
+          :class="{ 'save-request-dirty': store.dirty(id) && !tab.saving }"
           :label="tab.saving ? 'Saving request' : 'Save request'"
           icon="save"
           :disabled="tab.saving"
@@ -225,3 +242,11 @@ function editorAction(id: string) {
     ></SplitPanes>
   </div>
 </template>
+<style>
+.icon-button.save-request-button,
+.icon-button.save-request-button:not(:disabled):hover,
+.icon-button.save-request-button:focus { color: var(--muted); }
+.icon-button.save-request-button.save-request-dirty,
+.icon-button.save-request-button.save-request-dirty:hover,
+.icon-button.save-request-button.save-request-dirty:focus { color: var(--primary-text); }
+</style>

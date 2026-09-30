@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod error;
 mod execution;
+mod generate_curl;
 mod lifecycle;
 #[cfg(target_os = "macos")]
 mod macos_input;
@@ -298,6 +299,7 @@ pub fn run() {
             commands::commit_collection_export,
             commands::discard_collection_export,
             commands::prepare_execution,
+            commands::generate_curl,
             commands::execute_request,
             commands::cancel_request,
             commands::list_history,
