@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 import IconButton from "./IconButton.vue";
-const props = defineProps<{ open: boolean; title: string; panelClass?: string; busy?: boolean }>();
+const props = defineProps<{
+  open: boolean;
+  title: string;
+  panelClass?: string;
+  busy?: boolean;
+  initialFocus?: "auto" | "panel";
+  dismissOnBackdrop?: boolean;
+}>();
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLDivElement>();
 const id = useId();
 let previous: HTMLElement | null = null;
 let background: HTMLElement | null = null;
 let wasInert = false;
+let backdropPointerId: number | null = null;
+let releasedOnBackdrop = false;
 const focusable = () => [
   ...(dialog.value?.querySelectorAll<HTMLElement>(
     'button:not(:disabled), input:not(:disabled):not([type="hidden"]), textarea:not(:disabled), select:not(:disabled), [href], [tabindex="0"]',
@@ -18,9 +27,29 @@ function restore() {
   previous?.focus({ preventScroll: true });
   background = null;
 }
+function resetBackdropGesture() {
+  backdropPointerId = null;
+  releasedOnBackdrop = false;
+}
+function backdropPointerDown(event: PointerEvent) {
+  resetBackdropGesture();
+  if (event.target === event.currentTarget && event.button === 0)
+    backdropPointerId = event.pointerId;
+}
+function backdropPointerUp(event: PointerEvent) {
+  releasedOnBackdrop = event.target === event.currentTarget
+    && backdropPointerId !== null && event.pointerId === backdropPointerId;
+  backdropPointerId = null;
+}
+function backdropClick(event: MouseEvent) {
+  const dismiss = releasedOnBackdrop && event.target === event.currentTarget;
+  resetBackdropGesture();
+  if (dismiss && props.dismissOnBackdrop && !props.busy) emit("close");
+}
 watch(
   () => props.open,
   async (open) => {
+    resetBackdropGesture();
     if (!open) {
       restore();
       return;
@@ -35,12 +64,14 @@ watch(
       background.inert = true;
     }
     await nextTick();
-    if (props.open)
-      (
+    if (props.open) {
+      const target = props.initialFocus === "panel" ? dialog.value : (
         dialog.value?.querySelector<HTMLElement>("[data-autofocus]") ??
         focusable()[0] ??
         dialog.value
-      )?.focus();
+      );
+      target?.focus();
+    }
   },
   { immediate: true },
 );
@@ -64,7 +95,9 @@ function keydown(event: KeyboardEvent) {
     ) {
       event.preventDefault();
       last?.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
+    } else if (!event.shiftKey && (
+      document.activeElement === last || document.activeElement === dialog.value
+    )) {
       event.preventDefault();
       first.focus();
     }
@@ -74,7 +107,15 @@ onBeforeUnmount(restore);
 </script>
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-backdrop" @keydown="keydown">
+    <div
+      v-if="open"
+      class="modal-backdrop"
+      @keydown="keydown"
+      @pointerdown.capture="backdropPointerDown"
+      @pointerup.capture="backdropPointerUp"
+      @pointercancel="resetBackdropGesture"
+      @click="backdropClick"
+    >
       <div
         ref="dialog"
         class="ui-modal"

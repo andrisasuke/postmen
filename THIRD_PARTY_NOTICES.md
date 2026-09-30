@@ -12,7 +12,7 @@ Bundled UI assets and runtime libraries:
 | Vue | 3.5.42 | licenses/Vue-MIT.txt |
 | Pinia | 3.0.4 | licenses/Pinia-MIT.txt |
 | Tauri Rust runtime (MIT option) | 2.11.5 | licenses/Tauri-MIT.txt |
-| CodeMirror 6 (state, view, commands, language, JSON, lint, search) | Exact versions in frontend/package.json | licenses/CodeMirror-MIT.txt |
+| CodeMirror 6 (state, view, commands, language, JSON, legacy shell mode, lint, search) | Exact versions in frontend/package.json | licenses/CodeMirror-MIT.txt |
 | Lezer JSON parsing/highlighting | Exact versions in package-lock.json | licenses/Lezer-MIT.txt |
 | Zod | 4.5.4 | licenses/Zod-MIT.txt |
 | rusqlite | 0.40.2 | licenses/rusqlite-MIT.txt |

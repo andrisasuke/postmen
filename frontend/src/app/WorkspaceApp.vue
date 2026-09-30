@@ -23,12 +23,13 @@ import WorkspaceManager from "../features/WorkspaceManager.vue";
 import { useSettingsStore } from "../stores/settings";
 import { useViewport } from "../composables/useViewport";
 import type { BootstrapInfo, ShellAction } from "../types/shell";
-import type { Parent, TreeRef } from "../types/data";
+import { clone, type Parent, type TreeRef, type RequestDoc } from "../types/data";
 import TitleBar from "../components/layout/TitleBar.vue";
 import WorkspaceSidebar from "../components/layout/WorkspaceSidebar.vue";
 import WorkspaceOverview from "../components/layout/WorkspaceOverview.vue";
 import StatusBar from "../components/layout/StatusBar.vue";
 import RequestEditor from "../features/RequestEditor.vue";
+import GenerateCodeDialog from "../features/GenerateCodeDialog.vue";
 import CreateRequestDialog from "../features/CreateRequestDialog.vue";
 import CreateFolderDialog from "../features/CreateFolderDialog.vue";
 import ImportCollectionDialog from "../features/ImportCollectionDialog.vue";
@@ -69,6 +70,7 @@ const creating = ref<Parent | null>(null);
 const creatingFolder = ref<Parent | null>(null);
 const importing = ref(false);
 const exporting = ref(false);
+const generating = ref<RequestDoc | null>(null);
 const cloning = ref<string | null>(null);
 const renaming = ref<TreeRef | null>(null);
 const fatal = ref(false);
@@ -130,6 +132,7 @@ const modalOpen = computed(
     creatingFolder.value !== null ||
     importing.value ||
     exporting.value ||
+    generating.value !== null ||
     cloning.value !== null ||
     renaming.value !== null ||
     pendingClose.value !== null ||
@@ -208,6 +211,7 @@ function requestCreated(id: string) {
   void open(id);
 }
 async function open(id: string) {
+  if (modalOpen.value) return;
   try {
     await store.open(id);
     workspaces.managing = false;
@@ -215,6 +219,11 @@ async function open(id: string) {
   } catch (e) {
     store.error = errorMessage(e);
   }
+}
+function generateCode(id: string) {
+  const draft = store.tabs[id]?.draft;
+  if (modalOpen.value || store.environmentBusy || !draft) return;
+  generating.value = clone(draft);
 }
 async function connect() {
   if (store.loading) return;
@@ -265,6 +274,7 @@ async function connect() {
   }
 }
 async function close(id: string) {
+  if (modalOpen.value) return;
   if (store.tabs[id]?.saving) {
     store.error = "Wait for the save to finish before closing this tab.";
     return;
@@ -420,6 +430,7 @@ function unload(event: BeforeUnloadEvent) {
   }
 }
 function tabKey(event: KeyboardEvent) {
+  if (modalOpen.value) return;
   if (
     !(event.target instanceof HTMLElement) ||
     event.target.getAttribute("role") !== "tab"
@@ -447,6 +458,7 @@ function tabKey(event: KeyboardEvent) {
 }
 function dropTab(event: DragEvent, id: string) {
   event.preventDefault();
+  if (modalOpen.value) return;
   const source = draggingTab.value;
   draggingTab.value = null;
   if (!source || source === id) return;
@@ -456,6 +468,7 @@ function dropTab(event: DragEvent, id: string) {
 }
 function tabContextMenu(event: MouseEvent, id: string) {
   event.preventDefault();
+  if (modalOpen.value) return;
   tabContext.value = id;
   void tabMenu.value?.openAt(
     event.clientX,
@@ -464,6 +477,7 @@ function tabContextMenu(event: MouseEvent, id: string) {
   );
 }
 function tabAction(value: string) {
+  if (modalOpen.value) return;
   const id = tabContext.value;
   if (!id) return;
   if (value === "close") close(id);
@@ -642,7 +656,7 @@ onUnmounted(() => {
                 :data-request-tab="id"
                 :aria-selected="store.activeId === id"
                 :tabindex="store.activeId === id ? 0 : -1"
-                @click="store.activate(id)"
+                @click="!modalOpen && store.activate(id)"
               >
                 <span
                   class="method-label"
@@ -677,6 +691,7 @@ onUnmounted(() => {
           v-if="!workspaces.creating && store.activeId && store.active"
           :id="store.activeId"
           :key="store.activeId"
+          @generate-code="generateCode"
         />
         <WorkspaceOverview
           v-else
@@ -893,6 +908,7 @@ onUnmounted(() => {
     <ToastHost />
     <ImportCollectionDialog v-if="importing" @close="importing = false" @imported="id => { importing = false; sidebar?.revealCollection(id); }" />
     <ExportCollectionDialog v-if="exporting" @close="exporting = false" />
+    <GenerateCodeDialog v-if="generating" :request="generating" @close="generating = null" />
     <EnvironmentManager v-if="environmentScope" :collection-id="store.activeCollectionId" :initial-scope="environmentScope" @close="environmentScope = null" />
     <QuitDialog
       :open="quitOpen"
