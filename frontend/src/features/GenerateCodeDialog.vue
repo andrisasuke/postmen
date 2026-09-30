@@ -55,10 +55,10 @@ async function copy() {
   </UiModal>
 </template>
 <style>
-.generate-code-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 66px); display: flex; flex-direction: column; }
+.generate-code-dialog { width: min(800px, calc(100vw - 32px)); height: min(500px, calc(100dvh - 66px)); display: flex; flex-direction: column; }
 .generate-code-dialog .modal-header, .generate-code-dialog .modal-footer { flex-shrink: 0; }
-.generate-code-dialog .modal-body { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.generate-code-dialog .modal-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
 .generate-code-toolbar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.generate-code-dialog p { margin: 0; }
-.shell-preview { height: min(520px, calc(100dvh - 240px)); min-height: 100px; flex-shrink: 0; }
+.generate-code-dialog p { margin: 0; flex-shrink: 0; }
+.generate-code-dialog .shell-preview { flex: 1; min-height: 0; }
 </style>
