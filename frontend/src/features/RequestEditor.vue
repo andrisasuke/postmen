@@ -95,6 +95,7 @@ function generateCode(event: MouseEvent) {
           :variables="variables"
         />
         <IconButton
+          class="generate-code-button"
           label="Generate cURL"
           icon="code"
           :disabled="store.environmentBusy"
@@ -243,6 +244,9 @@ function generateCode(event: MouseEvent) {
   </div>
 </template>
 <style>
+/* Retain the opener's focus for modal restoration without the global ring. */
+.icon-button.generate-code-button:focus,
+.icon-button.generate-code-button:focus-visible { outline: none; box-shadow: none; }
 .icon-button.save-request-button,
 .icon-button.save-request-button:not(:disabled):hover,
 .icon-button.save-request-button:focus { color: var(--muted); }

@@ -26,6 +26,7 @@ beforeEach(async () => {
 afterEach(() => { wrapper.unmount(); disposePinia(pinia); vi.unstubAllGlobals(); });
 it("places Generate immediately before Save and emits only the request ID", async () => {
   const generate = wrapper.get('[aria-label="Generate cURL"]');
+  expect(generate.classes()).toContain("generate-code-button");
   expect(generate.element.nextElementSibling).toBe(save().element);
   const draft = clone(store.tabs[a.id]!.draft); const persist = vi.spyOn(api, "saveRequest"); const send = vi.spyOn(useExecutionStore(), "send");
   await generate.trigger("click");

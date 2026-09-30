@@ -64,7 +64,7 @@ Collection variables belong only to that collection. Global variables are shared
 
 ### Generate cURL
 
-In the desktop app, click the **`</>` icon immediately left of Save** to open **Generate Code**. The read-only preview includes unsaved edits from the moment the dialog opens. Click **Copy cURL** to copy the command; if clipboard access fails, select the code and use **Cmd/Ctrl+C**. Close with **Escape** or **Close**. Generating or copying code does not save or send the request, or add execution history.
+In the desktop app, click the **`</>` icon immediately left of Save** to open **Generate Code**. The read-only preview includes unsaved edits from the moment the dialog opens. Click **Copy cURL** to copy the command; a green check appears for two seconds on success. If clipboard access fails, select the code and use **Cmd/Ctrl+C**. Close with **X**, a click outside the dialog, or **Escape**. Generating or copying code does not save or send the request, or add execution history.
 
 Commands target POSIX shells such as zsh and bash. They include the method, URL, enabled query parameters and headers, and JSON/raw or multipart body. URL/query/header variables use the selected environments; body and multipart values stay literal. JSON/raw body formatting is preserved. Multipart files use their original local paths, which must exist where you run the command.
 
