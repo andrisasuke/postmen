@@ -36,6 +36,7 @@
     "allow-commit-collection-export",
     "allow-discard-collection-export",
     "allow-prepare-execution",
+    "allow-generate-curl",
     "allow-execute-request",
     "allow-cancel-request",
     "allow-list-history",

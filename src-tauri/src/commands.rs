@@ -383,6 +383,17 @@ pub async fn prepare_execution(
     executions.prepare(input)
 }
 #[tauri::command]
+pub async fn generate_curl(
+    window: WebviewWindow,
+    db: State<'_, Database>,
+    input: crate::generate_curl::Input,
+) -> AppResult<crate::generate_curl::Output> {
+    work(window, db.inner().clone(), move |conn| {
+        crate::generate_curl::generate(conn, input.request)
+    })
+    .await
+}
+#[tauri::command]
 pub async fn select_environment(
     window: WebviewWindow,
     db: State<'_, Database>,

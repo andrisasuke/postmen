@@ -36,6 +36,7 @@ fn main() {
             "commit_collection_export",
             "discard_collection_export",
             "prepare_execution",
+            "generate_curl",
             "execute_request",
             "cancel_request",
             "list_history",

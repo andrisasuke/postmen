@@ -2021,6 +2021,10 @@ npm: @codemirror/language@6.12.4
 Declared license: MIT
 LICENSE: SHA256 05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07
 
+npm: @codemirror/legacy-modes@6.5.1
+Declared license: MIT
+LICENSE: SHA256 05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07
+
 npm: @codemirror/lint@6.9.7
 Declared license: MIT
 LICENSE: SHA256 05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07

@@ -12,7 +12,8 @@
 
 - **Workspaces:** independent collections, environments, saved tabs and history; create, switch, set a default and manage workspaces without hiding the sidebar.
 - **Collections & requests:** nested folders, search, persistent expand/collapse, reorder, rename, clone and delete. Create HTTP requests manually or import from cURL.
-- **Request editor:** synchronized URL/query parameters, header autocomplete, JSON/raw text and multipart bodies, file attachments, independent drafts and undo history.
+- **Request editor:** synchronized URL/query parameters, header autocomplete, JSON/raw text and multipart bodies, file attachments, independent drafts, undo history and a Save icon that highlights unsaved changes.
+- **Generate cURL:** preview and copy the current draft as a POSIX shell command, with active environment values and local multipart file paths.
 - **Environments:** select Collection and Global environments together; use `<<variable>>` in URLs, parameters and headers with autocomplete and value tooltips.
 - **Send & inspect:** native Rust HTTP, cancellation, verified TLS, response status/timing/headers, formatted or raw read-only previews and execution metadata history.
 - **Desktop experience:** light/dark/system themes, cyan accent `#8BE2FA`, resizable split panes, keyboard shortcuts, saved window geometry, notifications and unsaved-change Quit confirmation.
@@ -40,7 +41,7 @@ npm run tauri:build -- --bundles app   # macOS application bundle
 
 Output: `src-tauri/target/release/bundle/macos/Postmen.app`. Local builds are not signed/notarized for distribution. Rebuild and replace an installed app to update it. Use a separate Cargo target directory when preserving an older build.
 
-Tests are available via `npm test`, `npm run test:rust` and `npm run test:e2e` (requires Playwright browsers). Recent changes passed build/static checks; these commands are not a claim that all runtime tests were rerun. Broader visual and cross-monitor validation remains open.
+Tests are available via `npm test`, `npm run test:rust` and `npm run test:e2e` (requires Playwright browsers). These commands describe available checks, not a claim that they have all passed. Broader visual and cross-monitor validation remains open.
 
 ## Usage
 
@@ -60,6 +61,18 @@ Header:   Authorization: Bearer <<token>>
 ```
 
 Collection variables belong only to that collection. Global variables are shared by collections **within the same workspace**. Both environments can be selected independently; Collection values override Global values with the same name. Hover over a placeholder to inspect its resolved value. Body/multipart variable substitution is not supported.
+
+### Generate cURL
+
+In the desktop app, click the **`</>` icon immediately left of Save** to open **Generate Code**. The read-only preview includes unsaved edits from the moment the dialog opens. Click **Copy cURL** to copy the command; a green check appears for two seconds on success. If clipboard access fails, select the code and use **Cmd/Ctrl+C**. Close with **X**, a click outside the dialog, or **Escape**. Generating or copying code does not save or send the request, or add execution history.
+
+Commands target POSIX shells such as zsh and bash. They include the method, URL, enabled query parameters and headers, and JSON/raw or multipart body. URL/query/header variables use the selected environments; body and multipart values stay literal. JSON/raw body formatting is preserved. Multipart files use their original local paths, which must exist where you run the command.
+
+Generated code includes resolved authentication values and local file paths; review it before sharing. PostMen's timeout and redirect settings are not exported. Invalid URLs/headers, unresolved variables, unavailable files and unsupported representations show an error in the dialog. HEAD with an active body and empty multipart forms are not supported.
+
+### Save status
+
+The Save icon uses the theme's blue/cyan accent when the request has unsaved data changes. It turns gray while saving and stays gray once all changes are saved. If saving fails or newer edits remain after a save, it turns blue again. Undoing changes back to the saved values or discarding the draft also restores gray. This applies to the Save button and **Cmd/Ctrl+S**; changing editor tabs, scrolling or layout does not mark the request as changed.
 
 ### Import & export
 
