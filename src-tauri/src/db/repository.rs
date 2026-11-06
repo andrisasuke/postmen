@@ -348,7 +348,6 @@ pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests)
     if input.requests.is_empty() || input.requests.len() > 100 {
         return Err(AppError::invalid("Choose between 1 and 100 requests to move."));
     }
-    validation::id(&input.target_folder_id)?;
     let tx = conn.transaction()?;
     let mut seen = HashSet::new();
     let mut collection: Option<String> = None;
@@ -374,17 +373,17 @@ pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests)
         originals.push((item, original));
     }
     let collection = collection.ok_or_else(|| AppError::invalid("Choose requests to move."))?;
-    require_parent(&tx, &collection, Some(&input.target_folder_id))?;
-    let mut position = next_position(&tx, &collection, Some(&input.target_folder_id))?;
+    require_parent(&tx, &collection, input.target_folder_id.as_deref())?;
+    let mut position = next_position(&tx, &collection, input.target_folder_id.as_deref())?;
     let mut saved = Vec::with_capacity(originals.len());
     for (item, original) in originals {
-        let moving = original.folder_id.as_deref() != Some(&input.target_folder_id);
+        let moving = original.folder_id != input.target_folder_id;
         if !moving && item.draft.is_none() {
             saved.push(original);
             continue;
         }
         let mut doc = item.draft.clone().unwrap_or(original.clone());
-        doc.folder_id = Some(input.target_folder_id.clone());
+        doc.folder_id = input.target_folder_id.clone();
         doc.position = if moving { position } else { original.position };
         validation::request(&doc)?;
         tx.execute("UPDATE requests SET folder_id=?1,name=?2,method=?3,url=?4,body_kind=?5,body=?6,position=?7,revision=revision+1,updated_at=?8 WHERE id=?9", params![doc.folder_id,validation::name(&doc.name)?,doc.method,doc.url,doc.body_kind,doc.body,doc.position,now(),doc.id])?;

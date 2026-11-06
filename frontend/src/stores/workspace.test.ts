@@ -531,6 +531,19 @@ describe("M2 workspace drafts and persistence", () => {
     await store.saveAndMoveRequests([a.id], folder.id);
     expect(call).not.toHaveBeenCalled();
   });
+  it("atomically saves dirty requests while moving a mixed selection to collection root", async () => {
+    const { a, b, parent } = await pair();
+    const folder = await store.createFolder(parent, "Folder");
+    await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
+    store.tabs[a.id]!.draft.body = "saved at root";
+    await store.saveAndMoveRequests([a.id, b.id], null);
+    const root = store.data.requests.filter(request => request.folderId === null).sort((left, right) => left.position - right.position);
+    expect(root.map(request => request.id)).toEqual([b.id, a.id]);
+    expect(store.tabs[a.id]!.saved.body).toBe("saved at root");
+    const call = vi.spyOn(api, "saveAndMoveRequests");
+    await store.saveAndMoveRequests([a.id, b.id], null);
+    expect(call).not.toHaveBeenCalled();
+  });
   it("deleting a selected environment clears selection, retaining request templates and draft bodies", async () => {
     const { a } = await pair();
     const env = await store.saveEnvironment({

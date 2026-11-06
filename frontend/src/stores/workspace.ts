@@ -730,13 +730,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
-  async function saveAndMoveRequests(ids: string[], targetFolderId: string) {
+  async function saveAndMoveRequests(ids: string[], targetFolderId: string | null) {
     const unique = [...new Set(ids)];
-    const target = data.value.folders.find(folder => folder.id === targetFolderId);
-    if (!target || !unique.length) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    if (!unique.length) throw new DataError("INVALID_INPUT", "Choose requests to move.");
     const summaries = unique.map(id => data.value.requests.find(request => request.id === id));
-    if (summaries.some(request => !request || request.collectionId !== target.collectionId))
-      throw new DataError("INVALID_INPUT", "Select requests from one collection and a folder in that collection.");
+    const collectionId = summaries[0]?.collectionId;
+    if (!collectionId || summaries.some(request => !request || request.collectionId !== collectionId))
+      throw new DataError("INVALID_INPUT", "Select requests from one collection.");
+    const target = targetFolderId === null ? null : data.value.folders.find(folder => folder.id === targetFolderId);
+    if (targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    if (target && target.collectionId !== collectionId)
+      throw new DataError("INVALID_INPUT", "Select requests and a folder in the same collection.");
     if (summaries.every(request => request?.folderId === targetFolderId) && !unique.some(id => dirty(id))) return;
     if (unique.some(id => tabs[id]?.saving)) throw new DataError("BUSY", "Wait for selected request saves to finish.");
     const locked = unique.flatMap(id => tabs[id] ? [tabs[id]!] : []);

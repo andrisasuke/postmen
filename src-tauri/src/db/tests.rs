@@ -117,7 +117,7 @@ fn save_and_move_requests_is_atomic_and_preserves_visible_input_order() {
         let mut dirty = repo::get_request(c, &first.id)?;
         dirty.body = "saved atomically".into();
         let saved = repo::save_and_move_requests(c, SaveAndMoveRequests {
-            target_folder_id: target.id.clone(),
+            target_folder_id: Some(target.id.clone()),
             requests: vec![
                 MoveRequestItem { id: second.id.clone(), revision: second.revision, draft: None },
                 MoveRequestItem { id: first.id.clone(), revision: dirty.revision, draft: Some(dirty) },
@@ -128,7 +128,7 @@ fn save_and_move_requests_is_atomic_and_preserves_visible_input_order() {
         assert_eq!(repo::get_request(c, &first.id)?.body, "saved atomically");
         let before = repo::workspace(c)?;
         let conflict = repo::save_and_move_requests(c, SaveAndMoveRequests {
-            target_folder_id: target.id,
+            target_folder_id: Some(target.id),
             requests: vec![
                 MoveRequestItem { id: first.id, revision: saved[1].revision - 1, draft: None },
                 MoveRequestItem { id: second.id, revision: saved[0].revision, draft: None },
@@ -157,7 +157,7 @@ fn save_and_move_requests_rolls_back_after_a_later_dirty_write_fails() {
         let mut dirty_second = second.clone(); dirty_second.body = "second changed".into(); dirty_second.headers = vec![row("X-Second", "two")];
         c.execute_batch(&format!("CREATE TRIGGER fail_second_move BEFORE INSERT ON request_headers WHEN NEW.request_id = '{}' BEGIN SELECT RAISE(ABORT,'second write failed'); END;", second.id))?;
         let failure = repo::save_and_move_requests(c, SaveAndMoveRequests {
-            target_folder_id: target.id,
+            target_folder_id: Some(target.id),
             requests: vec![
                 MoveRequestItem { id: first.id.clone(), revision: first.revision, draft: Some(dirty_first) },
                 MoveRequestItem { id: second.id.clone(), revision: second.revision, draft: Some(dirty_second) },
@@ -172,6 +172,38 @@ fn save_and_move_requests_rolls_back_after_a_later_dirty_write_fails() {
             assert_eq!(current.folder_id, original.folder_id);
             assert_eq!(current.headers.len(), original.headers.len());
         }
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn save_and_move_requests_moves_to_collection_root_atomically_and_keeps_root_noops_stable() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let folder = repo::create_folder(c, CreateFolder { collection_id: collection.id.clone(), parent_id: None, name: "Folder".into() })?;
+        let nested_created = request(c, &collection.id, Some(folder.id.clone()));
+        let root_created = request(c, &collection.id, None);
+        let nested = repo::get_request(c, &nested_created.id)?;
+        let root = repo::get_request(c, &root_created.id)?;
+        let mut dirty = nested.clone();
+        dirty.body = "saved while moving to root".into();
+        let saved = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: None,
+            requests: vec![
+                MoveRequestItem { id: nested.id.clone(), revision: nested.revision, draft: Some(dirty) },
+                MoveRequestItem { id: root.id.clone(), revision: root.revision, draft: None },
+            ],
+        })?;
+        assert!(saved.iter().all(|doc| doc.folder_id.is_none()));
+        assert_eq!(saved[0].body, "saved while moving to root");
+        assert_eq!(saved[1].position + 1, saved[0].position);
+        let root_after = repo::get_request(c, &root.id)?;
+        let no_op = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: None,
+            requests: vec![MoveRequestItem { id: root.id.clone(), revision: root_after.revision, draft: None }],
+        })?;
+        assert_eq!(no_op[0].revision, root_after.revision);
         Ok(())
     }).unwrap();
 }

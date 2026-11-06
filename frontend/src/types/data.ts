@@ -136,7 +136,7 @@ export interface ReorderInput {
   items: TreeRef[];
 }
 export interface SaveAndMoveRequestsInput {
-  targetFolderId: string;
+  targetFolderId: string | null;
   requests: Array<{ id: string; revision: number; draft: RequestDoc | null }>;
 }
 export interface EnvironmentInput {

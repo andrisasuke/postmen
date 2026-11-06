@@ -14,7 +14,7 @@ const emit = defineEmits<{
   open: [id: string];
   remove: [item: TreeRef];
   move: [item: TreeRef];
-  moveRequests: [ids: string[], targetId: string];
+  moveRequests: [ids: string[], targetId: string | null];
   about: [];
   import: [];
   export: [];
@@ -50,12 +50,12 @@ const menu = ref<InstanceType<typeof UiMenu>>();
 const contextItem = ref<TreeRef | null>(null);
 const dragging = ref<TreeRef | null>(null);
 const selectedRequestIds = ref<string[]>([]);
-type DropZone = "before" | "folder" | "after";
+type DropZone = "before" | "folder" | "outward" | "after";
 const dropTarget = ref<{ id: string; kind: TreeKind; zone: DropZone } | null>(null);
 type DropDecision =
   | { action: "none" }
   | { action: "blocked"; message: string }
-  | { action: "move-to-folder" }
+  | { action: "move-to-folder"; parentId: string | null; zone: "folder" | "outward" }
   | { action: "reorder"; zone: "before" | "after" };
 interface TreeRow extends TreeRef {
   name: string;
@@ -297,12 +297,33 @@ function canReorder(source: TreeRef, target: TreeRow) {
     (item) => item.id === source.id && item.kind === source.kind,
   );
 }
-function canMoveToFolder(source: TreeRef, target: TreeRow) {
+function canMoveToContainer(source: TreeRef, target: TreeRow) {
   const sourceRow = draggedRow();
   const selected = selectedRequestIds.value.map(id => all.value.find(row => row.id === id)).filter((row): row is TreeRow => !!row);
-  return source.kind === "request" && target.kind === "folder" && selected.length > 0 &&
+  const parentId = target.kind === "collection" ? null : target.id;
+  return source.kind === "request" && (target.kind === "folder" || target.kind === "collection") && selected.length > 0 &&
     selected.every(row => row.collectionId === target.collectionId) && sourceRow?.collectionId === target.collectionId &&
-    selected.some(row => row.parentId !== target.id);
+    selected.some(row => row.parentId !== parentId);
+}
+function isAncestorContainer(ancestorId: string | null, childParentId: string | null) {
+  let parentId = childParentId;
+  while (parentId !== null) {
+    const folder = store.data.folders.find(value => value.id === parentId);
+    parentId = folder?.parentId ?? null;
+    if (parentId === ancestorId) return true;
+  }
+  return false;
+}
+function canMoveOutwardToRequestParent(source: TreeRef, target: TreeRow) {
+  const sourceRow = draggedRow();
+  const selected = selectedRequestIds.value.map(id => all.value.find(row => row.id === id)).filter((row): row is TreeRow => !!row);
+  const parentId = target.parentId;
+  return source.kind === "request" && target.kind === "request" && selected.length > 0 &&
+    sourceRow?.collectionId === target.collectionId &&
+    isAncestorContainer(parentId, sourceRow?.parentId ?? null) &&
+    selected.every(row => row.collectionId === target.collectionId &&
+      (row.parentId === parentId || isAncestorContainer(parentId, row.parentId))) &&
+    selected.some(row => row.parentId !== parentId);
 }
 function selectedInTreeOrder() {
   const selected = new Set(selectedRequestIds.value);
@@ -340,12 +361,17 @@ function dragBlockMessage(source: TreeRef) {
 }
 function dropDecision(source: TreeRef | null, target: TreeRow, event: DragEvent): DropDecision {
   if (!source) return { action: "none" };
-  // A request dropped anywhere on a folder always enters that folder. This
-  // avoids edge-zone ambiguity while preserving reordering on other rows.
-  if (source.kind === "request" && target.kind === "folder") {
-    if (!canMoveToFolder(source, target)) return { action: "none" };
+  // A request dropped anywhere on a folder or collection enters that container.
+  // This avoids edge-zone ambiguity while preserving reordering on other rows.
+  if (source.kind === "request" && (target.kind === "folder" || target.kind === "collection")) {
+    if (!canMoveToContainer(source, target)) return { action: "none" };
     const message = dragBlockMessage(source);
-    return message ? { action: "blocked", message } : { action: "move-to-folder" };
+    const parentId = target.kind === "collection" ? null : target.id;
+    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId, zone: "folder" };
+  }
+  if (source.kind === "request" && target.kind === "request" && canMoveOutwardToRequestParent(source, target)) {
+    const message = dragBlockMessage(source);
+    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId: target.parentId, zone: "outward" };
   }
   if (!canReorder(source, target)) return { action: "none" };
   return { action: "reorder", zone: reorderZone(event) };
@@ -371,7 +397,7 @@ function dragOver(event: DragEvent, target: TreeRow) {
   dropTarget.value = {
     id: target.id,
     kind: target.kind,
-    zone: decision.action === "move-to-folder" ? "folder" : decision.zone,
+    zone: decision.zone,
   };
 }
 function clearDropTarget(target?: TreeRow) {
@@ -395,10 +421,10 @@ async function drop(event: DragEvent, target: TreeRow) {
   try {
     if (decision.action === "move-to-folder") {
       const ids = selectedInTreeOrder();
-      if (ids.some(id => store.dirty(id))) emit("moveRequests", ids, target.id);
+      if (ids.some(id => store.dirty(id))) emit("moveRequests", ids, decision.parentId);
       else {
-        await store.saveAndMoveRequests(ids, target.id);
-        setExpanded(target.id, true);
+        await store.saveAndMoveRequests(ids, decision.parentId);
+        if (target.kind === "folder") setExpanded(target.id, true);
       }
       return;
     }
@@ -557,6 +583,7 @@ onBeforeUnmount(stop);
             'collection-row': row.kind === 'collection',
             'drop-before': isDropTarget(row, 'before'),
             'folder-drop-target': isDropTarget(row, 'folder'),
+            'outward-drop-target': isDropTarget(row, 'outward'),
             'drop-after': isDropTarget(row, 'after'),
           }"
           :style="{ paddingLeft: `${12 + row.depth * 16}px` }"

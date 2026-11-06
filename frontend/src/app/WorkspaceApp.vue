@@ -79,7 +79,7 @@ const sidebar = ref<InstanceType<typeof WorkspaceSidebar>>();
 const pendingClose = ref<string | null>(null);
 const deleting = ref<TreeRef | null>(null);
 const moving = ref<TreeRef | null>(null);
-const movingRequests = ref<{ ids: string[]; targetId: string } | null>(null);
+const movingRequests = ref<{ ids: string[]; targetId: string | null } | null>(null);
 const destination = ref<string | null>(null);
 const reloading = ref<string | null>(null);
 const modalError = ref("");
@@ -333,7 +333,7 @@ function askMove(item: TreeRef) {
   destination.value = null;
   modalError.value = "";
 }
-async function askMoveRequests(ids: string[], targetId: string) {
+async function askMoveRequests(ids: string[], targetId: string | null) {
   modalError.value = "";
   if (!ids.some(id => store.dirty(id))) {
     try { await store.saveAndMoveRequests(ids, targetId); }
@@ -346,7 +346,11 @@ const dirtyMovingRequests = computed(() => movingRequests.value?.ids.filter(id =
 async function saveAndMoveRequests() {
   if (!movingRequests.value || busy.value) return;
   busy.value = true; modalError.value = "";
-  try { await store.saveAndMoveRequests(movingRequests.value.ids, movingRequests.value.targetId); sidebar.value?.revealFolder(movingRequests.value.targetId); movingRequests.value = null; }
+  try {
+    await store.saveAndMoveRequests(movingRequests.value.ids, movingRequests.value.targetId);
+    if (movingRequests.value.targetId) sidebar.value?.revealFolder(movingRequests.value.targetId);
+    movingRequests.value = null;
+  }
   catch (e) { modalError.value = errorMessage(e); }
   finally { busy.value = false; }
 }

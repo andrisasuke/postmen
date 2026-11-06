@@ -260,23 +260,25 @@ export function createMemoryApi(persist = false): DataApi {
     },
     async saveAndMoveRequests(input) {
       if (!input.requests.length || input.requests.length > 100) throw new DataError("INVALID_INPUT", "Choose requests to move.");
-      const target = data.folders.find(folder => folder.id === input.targetFolderId);
-      if (!target) throw new DataError("NOT_FOUND", "This folder no longer exists.");
       const selected = input.requests.map(item => {
         const old = get(item.id);
         if (old.revision !== item.revision) throw new DataError("CONFLICT", "A newer saved version exists. Your drafts were kept.");
-        if (old.collectionId !== target.collectionId) throw new DataError("INVALID_INPUT", "Requests cannot move between collections.");
         if (item.draft && (item.draft.id !== old.id || item.draft.revision !== old.revision)) throw new DataError("CONFLICT", "A newer saved version exists. Your drafts were kept.");
         return { old, draft: item.draft };
       });
       if (new Set(input.requests.map(item => item.id)).size !== input.requests.length) throw new DataError("INVALID_INPUT", "A request was selected more than once.");
+      const collectionId = selected[0]!.old.collectionId;
+      if (selected.some(({ old }) => old.collectionId !== collectionId)) throw new DataError("INVALID_INPUT", "Requests cannot move between collections.");
+      const target = input.targetFolderId === null ? null : data.folders.find(folder => folder.id === input.targetFolderId);
+      if (input.targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "This folder no longer exists.");
+      if (target && target.collectionId !== collectionId) throw new DataError("INVALID_INPUT", "Requests cannot move between collections.");
       const before = clone(requests);
       try {
-        let position = siblingPosition(target.collectionId, target.id);
+        let position = siblingPosition(collectionId, input.targetFolderId);
         const saved = selected.map(({ old, draft }) => {
-          const moving = old.folderId !== target.id;
+          const moving = old.folderId !== input.targetFolderId;
           if (!moving && !draft) return clone(old);
-          const next = { ...clone(draft ?? old), folderId: target.id, position: moving ? position++ : old.position, revision: old.revision + 1, createdAt: old.createdAt, updatedAt: now() };
+          const next = { ...clone(draft ?? old), folderId: input.targetFolderId, position: moving ? position++ : old.position, revision: old.revision + 1, createdAt: old.createdAt, updatedAt: now() };
           requests[next.id] = next;
           return clone(next);
         });

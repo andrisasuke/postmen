@@ -227,6 +227,6 @@ pub struct MoveRequestItem {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveAndMoveRequests {
-    pub target_folder_id: String,
+    pub target_folder_id: Option<String>,
     pub requests: Vec<MoveRequestItem>,
 }

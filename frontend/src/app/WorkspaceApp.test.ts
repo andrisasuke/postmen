@@ -128,12 +128,13 @@ it("shows only dirty selected requests and Save All & Move saves and moves them"
   expect(store.data.requests.find(request => request.id === b.id)?.folderId).toBe(folder.id);
 });
 it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchanged", async () => {
-  store.tabs[a.id]!.draft.body = "keep draft";
   const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
-  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], folder.id);
+  await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
+  store.tabs[a.id]!.draft.body = "keep draft";
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], null);
   await flushPromises();
   Array.from(document.querySelectorAll('[role="dialog"] button')).find(button => button.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await flushPromises();
   expect(store.tabs[a.id]!.draft.body).toBe("keep draft");
-  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBeNull();
+  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
 });
