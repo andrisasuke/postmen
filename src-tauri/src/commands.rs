@@ -244,7 +244,7 @@ pub async fn save_and_move_requests(
     window: WebviewWindow,
     db: State<'_, Database>,
     input: SaveAndMoveRequests,
-) -> AppResult<Vec<RequestDoc>> {
+) -> AppResult<SaveAndMoveRequestsResult> {
     work(window, db.inner().clone(), move |c| repo::save_and_move_requests(c, input)).await
 }
 #[tauri::command]

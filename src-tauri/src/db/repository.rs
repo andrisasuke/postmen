@@ -344,7 +344,7 @@ pub fn save_request(conn: &mut Connection, doc: RequestDoc) -> AppResult<Request
     tx.commit()?;
     Ok(saved)
 }
-pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests) -> AppResult<Vec<RequestDoc>> {
+pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests) -> AppResult<SaveAndMoveRequestsResult> {
     if input.requests.is_empty() || input.requests.len() > 100 {
         return Err(AppError::invalid("Choose between 1 and 100 requests to move."));
     }
@@ -374,25 +374,53 @@ pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests)
     }
     let collection = collection.ok_or_else(|| AppError::invalid("Choose requests to move."))?;
     require_parent(&tx, &collection, input.target_folder_id.as_deref())?;
-    let mut position = next_position(&tx, &collection, input.target_folder_id.as_deref())?;
-    let mut saved = Vec::with_capacity(originals.len());
-    for (item, original) in originals {
-        let moving = original.folder_id != input.target_folder_id;
-        if !moving && item.draft.is_none() {
-            saved.push(original);
-            continue;
+    let selected: HashSet<&str> = originals.iter().map(|(_, original)| original.id.as_str()).collect();
+    let mut destination = Vec::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT 'folder', id, position FROM folders WHERE collection_id=?1 AND parent_id IS ?2 UNION ALL SELECT 'request', id, position FROM requests WHERE collection_id=?1 AND folder_id IS ?2 ORDER BY 3, 2"
+        )?;
+        let rows = statement.query_map(params![collection, input.target_folder_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (kind, id) = row?;
+            if input.anchor_id.is_none() || kind != "request" || !selected.contains(id.as_str()) {
+                destination.push(TreeRef { kind, id });
+            }
         }
+    }
+    let insertion = if let Some(anchor_id) = &input.anchor_id {
+        validation::id(anchor_id)?;
+        let index = destination.iter().position(|item| item.kind == "request" && item.id == *anchor_id)
+            .ok_or_else(|| AppError::invalid("The request you dropped beside is no longer in the destination folder."))?;
+        index + usize::from(input.insert_after)
+    } else { destination.len() };
+    let moved = originals.iter()
+        .filter(|(_, original)| input.anchor_id.is_some() || original.folder_id != input.target_folder_id)
+        .map(|(_, original)| TreeRef { kind: "request".into(), id: original.id.clone() })
+        .collect::<Vec<_>>();
+    destination.splice(insertion..insertion, moved);
+    for (item, original) in &originals {
+        let moving = original.folder_id != input.target_folder_id;
+        if !moving && item.draft.is_none() { continue; }
         let mut doc = item.draft.clone().unwrap_or(original.clone());
         doc.folder_id = input.target_folder_id.clone();
-        doc.position = if moving { position } else { original.position };
+        doc.position = original.position;
         validation::request(&doc)?;
         tx.execute("UPDATE requests SET folder_id=?1,name=?2,method=?3,url=?4,body_kind=?5,body=?6,position=?7,revision=revision+1,updated_at=?8 WHERE id=?9", params![doc.folder_id,validation::name(&doc.name)?,doc.method,doc.url,doc.body_kind,doc.body,doc.position,now(),doc.id])?;
         if item.draft.is_some() { write_request_rows(&tx, &doc)?; }
-        saved.push(get_request(&tx, &doc.id)?);
-        if moving { position += 1; }
     }
+    for (position, item) in destination.iter().enumerate() {
+        match item.kind.as_str() {
+            "folder" => { tx.execute("UPDATE folders SET position=?1 WHERE id=?2", params![position as i64, item.id])?; }
+            "request" => { tx.execute("UPDATE requests SET position=?1 WHERE id=?2", params![position as i64, item.id])?; }
+            _ => return Err(AppError::invalid("Invalid destination item.")),
+        };
+    }
+    let saved = originals.iter().map(|(_, original)| get_request(&tx, &original.id)).collect::<AppResult<Vec<_>>>()?;
     tx.commit()?;
-    Ok(saved)
+    Ok(SaveAndMoveRequestsResult { requests: saved, items: destination })
 }
 pub(crate) fn write_request_rows(tx: &Connection, doc: &RequestDoc) -> AppResult<()> {
     for (table, values) in [

@@ -500,6 +500,22 @@ describe("M2 workspace drafts and persistence", () => {
     expect(store.tabs[a.id]!.saved.body).toBe("saved with move");
     expect(store.dirty(a.id)).toBe(false);
   });
+  it("inserts a cross-folder multi-selection before a request anchor with mixed siblings", async () => {
+    const { a, b, parent } = await pair();
+    const destination = await store.createFolder(parent, "Destination");
+    const earlier = await store.createRequest({ ...parent, parentId: destination.id }, "Earlier");
+    const nested = await store.createFolder({ ...parent, parentId: destination.id }, "Nested");
+    const target = await store.createRequest({ ...parent, parentId: destination.id }, "Target");
+    const later = await store.createRequest({ ...parent, parentId: destination.id }, "Later");
+    store.tabs[a.id]!.draft.body = "save while inserting";
+    await store.saveAndMoveRequests([b.id, a.id], destination.id, target.id);
+    expect(store.siblings({ kind: "request", id: target.id })).toEqual([
+      { kind: "request", id: earlier.id }, { kind: "folder", id: nested.id },
+      { kind: "request", id: b.id }, { kind: "request", id: a.id },
+      { kind: "request", id: target.id }, { kind: "request", id: later.id },
+    ]);
+    expect(store.tabs[a.id]!.saved.body).toBe("save while inserting");
+  });
   it("keeps every draft and summary unchanged when batch move fails", async () => {
     const { a, b, parent } = await pair();
     const folder = await store.createFolder(parent, "Folder");

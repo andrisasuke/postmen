@@ -273,17 +273,31 @@ export function createMemoryApi(persist = false): DataApi {
       if (input.targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "This folder no longer exists.");
       if (target && target.collectionId !== collectionId) throw new DataError("INVALID_INPUT", "Requests cannot move between collections.");
       const before = clone(requests);
+      const beforeData = clone(data);
       try {
-        let position = siblingPosition(collectionId, input.targetFolderId);
+        const selectedIds = new Set(selected.map(({ old }) => old.id));
+        const items: TreeRef[] = [
+          ...data.folders.filter(folder => folder.collectionId === collectionId && folder.parentId === input.targetFolderId).map(folder => ({ kind: "folder" as const, id: folder.id, position: folder.position })),
+          ...Object.values(requests).filter(request => request.collectionId === collectionId && request.folderId === input.targetFolderId && (!input.anchorId || !selectedIds.has(request.id))).map(request => ({ kind: "request" as const, id: request.id, position: request.position })),
+        ].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+        const anchor = input.anchorId ? items.findIndex(item => item.kind === "request" && item.id === input.anchorId) : items.length;
+        if (anchor < 0) throw new DataError("INVALID_INPUT", "The request you dropped beside is no longer in the destination folder.");
+        items.splice(anchor + (input.insertAfter ? 1 : 0), 0, ...selected.filter(({ old }) => !!input.anchorId || old.folderId !== input.targetFolderId).map(({ old }) => ({ kind: "request" as const, id: old.id, position: 0 })));
+        const positions = new Map(items.map((item, position) => [item.id, position]));
         const saved = selected.map(({ old, draft }) => {
           const moving = old.folderId !== input.targetFolderId;
-          if (!moving && !draft) return clone(old);
-          const next = { ...clone(draft ?? old), folderId: input.targetFolderId, position: moving ? position++ : old.position, revision: old.revision + 1, createdAt: old.createdAt, updatedAt: now() };
+          if (!moving && !draft) return { ...clone(old), position: positions.get(old.id)! };
+          const next = { ...clone(draft ?? old), folderId: input.targetFolderId, position: positions.get(old.id)!, revision: old.revision + 1, createdAt: old.createdAt, updatedAt: now() };
           requests[next.id] = next;
           return clone(next);
         });
-        summaries(); save(); return saved;
-      } catch (error) { Object.assign(requests, before); for (const id of Object.keys(requests)) if (!before[id]) delete requests[id]; summaries(); throw error; }
+        for (const [position, item] of items.entries()) {
+          const folder = data.folders.find(value => value.id === item.id);
+          if (folder) folder.position = position;
+          else if (requests[item.id]) requests[item.id]!.position = position;
+        }
+        summaries(); save(); return { requests: saved.map(request => clone(requests[request.id]!)), items: items.map(({ kind, id }) => ({ kind, id })) };
+      } catch (error) { Object.assign(requests, before); for (const id of Object.keys(requests)) if (!before[id]) delete requests[id]; data = beforeData; summaries(); throw error; }
     },
     async deleteRequest(id) {
       remove({ kind: "request", id });

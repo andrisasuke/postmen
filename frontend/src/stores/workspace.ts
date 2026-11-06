@@ -730,7 +730,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
-  async function saveAndMoveRequests(ids: string[], targetFolderId: string | null) {
+  async function saveAndMoveRequests(ids: string[], targetFolderId: string | null, anchorId: string | null = null, insertAfter = false) {
     const unique = [...new Set(ids)];
     if (!unique.length) throw new DataError("INVALID_INPUT", "Choose requests to move.");
     const summaries = unique.map(id => data.value.requests.find(request => request.id === id));
@@ -741,7 +741,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
     if (target && target.collectionId !== collectionId)
       throw new DataError("INVALID_INPUT", "Select requests and a folder in the same collection.");
-    if (summaries.every(request => request?.folderId === targetFolderId) && !unique.some(id => dirty(id))) return;
+    if (summaries.every(request => request?.folderId === targetFolderId) && !unique.some(id => dirty(id)) && !anchorId) return;
     if (unique.some(id => tabs[id]?.saving)) throw new DataError("BUSY", "Wait for selected request saves to finish.");
     const locked = unique.flatMap(id => tabs[id] ? [tabs[id]!] : []);
     for (const tab of locked) tab.saving = true;
@@ -750,8 +750,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       return { id, revision: tab?.saved.revision ?? request.revision, draft: tab && dirty(id) ? clone(tab.draft) : null };
     });
     try {
-      const saved = await backend().saveAndMoveRequests({ targetFolderId, requests: submitted });
-      for (const doc of saved) {
+      const result = await backend().saveAndMoveRequests({ targetFolderId, anchorId, insertAfter, requests: submitted });
+      for (const [position, item] of result.items.entries()) {
+        const node = item.kind === "folder" ? data.value.folders.find(value => value.id === item.id) : data.value.requests.find(value => value.id === item.id);
+        if (node) node.position = position;
+      }
+      for (const doc of result.requests) {
         updateSummary(doc);
         const tab = tabs[doc.id];
         const original = submitted.find(item => item.id === doc.id)!;

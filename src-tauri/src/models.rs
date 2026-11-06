@@ -228,5 +228,16 @@ pub struct MoveRequestItem {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveAndMoveRequests {
     pub target_folder_id: Option<String>,
+    #[serde(default)]
+    pub anchor_id: Option<String>,
+    #[serde(default)]
+    pub insert_after: bool,
     pub requests: Vec<MoveRequestItem>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAndMoveRequestsResult {
+    pub requests: Vec<RequestDoc>,
+    // The complete destination order includes folders, whose positions also change.
+    pub items: Vec<TreeRef>,
 }

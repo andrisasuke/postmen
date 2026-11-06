@@ -60,6 +60,10 @@ export async function call<T>(
   return parsed.data;
 }
 const nothing = z.null().transform(() => undefined);
+const saveAndMoveRequestsResultSchema = z.object({
+  requests: z.array(requestSchema).max(100),
+  items: z.array(z.object({ kind: z.enum(["collection", "folder", "request"]), id: z.string().uuid() })),
+});
 export const nativeDataApi: DataApi = {
   loadWorkspace: () => call("load_workspace", {}, workspaceSchema),
   createCollection: (name) =>
@@ -73,7 +77,7 @@ export const nativeDataApi: DataApi = {
   createRequest: (input) => call("create_request", { input }, requestSchema),
   getRequest: (id) => call("get_request", { id }, requestSchema),
   saveRequest: (input) => call("save_request", { input }, requestSchema),
-  saveAndMoveRequests: (input) => call("save_and_move_requests", { input }, z.array(requestSchema).max(100)),
+  saveAndMoveRequests: (input) => call("save_and_move_requests", { input }, saveAndMoveRequestsResultSchema),
   deleteRequest: (id) => call("delete_request", { id }, nothing),
   reorderItems: (input) => call("reorder_items", { input }, nothing),
   saveEnvironment: (input) => call("save_environment", { input }, environmentSchema),

@@ -14,7 +14,7 @@ const emit = defineEmits<{
   open: [id: string];
   remove: [item: TreeRef];
   move: [item: TreeRef];
-  moveRequests: [ids: string[], targetId: string | null];
+  moveRequests: [ids: string[], targetId: string | null, anchorId?: string | null, insertAfter?: boolean];
   about: [];
   import: [];
   export: [];
@@ -55,7 +55,7 @@ const dropTarget = ref<{ id: string; kind: TreeKind; zone: DropZone } | null>(nu
 type DropDecision =
   | { action: "none" }
   | { action: "blocked"; message: string }
-  | { action: "move-to-folder"; parentId: string | null; zone: "folder" | "outward" }
+  | { action: "move-to-folder"; parentId: string | null; zone: "folder" | "outward" | "before" | "after"; anchorId?: string; insertAfter?: boolean }
   | { action: "reorder"; zone: "before" | "after" };
 interface TreeRow extends TreeRef {
   name: string;
@@ -305,24 +305,13 @@ function canMoveToContainer(source: TreeRef, target: TreeRow) {
     selected.every(row => row.collectionId === target.collectionId) && sourceRow?.collectionId === target.collectionId &&
     selected.some(row => row.parentId !== parentId);
 }
-function isAncestorContainer(ancestorId: string | null, childParentId: string | null) {
-  let parentId = childParentId;
-  while (parentId !== null) {
-    const folder = store.data.folders.find(value => value.id === parentId);
-    parentId = folder?.parentId ?? null;
-    if (parentId === ancestorId) return true;
-  }
-  return false;
-}
-function canMoveOutwardToRequestParent(source: TreeRef, target: TreeRow) {
+function canMoveToRequestParent(source: TreeRef, target: TreeRow) {
   const sourceRow = draggedRow();
   const selected = selectedRequestIds.value.map(id => all.value.find(row => row.id === id)).filter((row): row is TreeRow => !!row);
   const parentId = target.parentId;
   return source.kind === "request" && target.kind === "request" && selected.length > 0 &&
     sourceRow?.collectionId === target.collectionId &&
-    isAncestorContainer(parentId, sourceRow?.parentId ?? null) &&
-    selected.every(row => row.collectionId === target.collectionId &&
-      (row.parentId === parentId || isAncestorContainer(parentId, row.parentId))) &&
+    selected.every(row => row.collectionId === target.collectionId) &&
     selected.some(row => row.parentId !== parentId);
 }
 function selectedInTreeOrder() {
@@ -369,9 +358,10 @@ function dropDecision(source: TreeRef | null, target: TreeRow, event: DragEvent)
     const parentId = target.kind === "collection" ? null : target.id;
     return message ? { action: "blocked", message } : { action: "move-to-folder", parentId, zone: "folder" };
   }
-  if (source.kind === "request" && target.kind === "request" && canMoveOutwardToRequestParent(source, target)) {
+  if (source.kind === "request" && target.kind === "request" && canMoveToRequestParent(source, target)) {
     const message = dragBlockMessage(source);
-    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId: target.parentId, zone: "outward" };
+    const zone = reorderZone(event);
+    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId: target.parentId, zone, anchorId: target.id, insertAfter: zone === "after" };
   }
   if (!canReorder(source, target)) return { action: "none" };
   return { action: "reorder", zone: reorderZone(event) };
@@ -421,9 +411,12 @@ async function drop(event: DragEvent, target: TreeRow) {
   try {
     if (decision.action === "move-to-folder") {
       const ids = selectedInTreeOrder();
-      if (ids.some(id => store.dirty(id))) emit("moveRequests", ids, decision.parentId);
+      if (ids.some(id => store.dirty(id))) {
+        if (decision.anchorId) emit("moveRequests", ids, decision.parentId, decision.anchorId, decision.insertAfter);
+        else emit("moveRequests", ids, decision.parentId);
+      }
       else {
-        await store.saveAndMoveRequests(ids, decision.parentId);
+        await store.saveAndMoveRequests(ids, decision.parentId, decision.anchorId ?? null, decision.insertAfter);
         if (target.kind === "folder") setExpanded(target.id, true);
       }
       return;

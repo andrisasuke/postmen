@@ -306,17 +306,17 @@ it("moves out through visible parent-level request rows and marks the outward de
   await flushPromises();
   await row("Nested request").trigger("dragstart");
   await row("Parent-level request").trigger("dragover");
-  expect(row("Parent-level request").classes()).toContain("outward-drop-target");
+  expect(row("Parent-level request").classes()).toContain("drop-after");
   expect(row("Parent-level request").classes()).not.toContain("folder-drop-target");
   await row("Parent-level request").trigger("drop");
   await flushPromises();
   expect(store.data.requests.find(request => request.name === "Nested request")?.folderId).toBe(folder.id);
   expect(store.data.requests.find(request => request.id === parentRequest.id)?.folderId).toBe(folder.id);
-  expect(store.siblings({ kind: "request", id: parentRequest.id }).map(item => item.id).slice(-2)).toEqual([folderRequest.id, nested.id]);
+  expect(store.siblings({ kind: "request", id: parentRequest.id }).map(item => item.id).slice(-2)).toEqual([nested.id, folderRequest.id]);
 
   await row("Folder request").trigger("dragstart");
   await row("Root request").trigger("dragover");
-  expect(row("Root request").classes()).toContain("outward-drop-target");
+  expect(row("Root request").classes()).toContain("drop-after");
   await row("Root request").trigger("drop");
   await flushPromises();
   expect(store.data.requests.find(request => request.id === folderRequest.id)?.folderId).toBeNull();
@@ -326,6 +326,23 @@ it("moves out through visible parent-level request rows and marks the outward de
   expect(store.data.requests.find(request => request.name === "Nested request")?.folderId).toBe(folder.id);
   expect(store.data.folders.find(value => value.id === subfolder.id)).toBeDefined();
 });
+it("moves a request from PRF into PO immediately before PO Target Stock", async () => {
+  const store = useWorkspaceStore();
+  const source = store.data.requests.find(request => request.name === "Nested request")!;
+  const collectionId = source.collectionId;
+  const po = await store.createFolder({ collectionId, parentId: null }, "PO");
+  const earlier = await store.createRequest({ collectionId, parentId: po.id }, "PO Earlier");
+  const target = await store.createRequest({ collectionId, parentId: po.id }, "PO Target Stock");
+  const later = await store.createRequest({ collectionId, parentId: po.id }, "PO Later");
+  await flushPromises();
+
+  await drag("Nested request", "PO Target Stock", 5);
+
+  expect(store.data.requests.find(request => request.id === source.id)?.folderId).toBe(po.id);
+  expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toEqual([
+    earlier.id, source.id, target.id, later.id,
+  ]);
+});
 it("uses the dirty Save All & Move warning for outward request-row destinations", async () => {
   const store = useWorkspaceStore();
   const folder = store.data.folders.find(value => value.name === "Folder")!;
@@ -333,7 +350,7 @@ it("uses the dirty Save All & Move warning for outward request-row destinations"
   const parentRequest = await store.createRequest({ collectionId: folder.collectionId, parentId: folder.id }, "Parent-level request");
   store.tabs[nested.id]!.draft.body = "confirm outward move";
   await drag("Nested request", "Parent-level request");
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], folder.id]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], folder.id, parentRequest.id, true]);
   expect(store.data.requests.find(request => request.id === nested.id)?.folderId).not.toBe(parentRequest.id);
 });
 it("sends dirty multi-selection to the collection root in tree order", async () => {
