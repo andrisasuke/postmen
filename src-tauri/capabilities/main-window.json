@@ -16,6 +16,7 @@
     "allow-delete-collection",
     "allow-create-folder",
     "allow-update-folder",
+    "allow-move-folder",
     "allow-delete-folder",
     "allow-create-request",
     "allow-get-request",

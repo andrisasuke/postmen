@@ -22,7 +22,8 @@
     "test:native": "node scripts/smoke-m3-native.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "test:capabilities": "node scripts/verify-tauri-capabilities.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
