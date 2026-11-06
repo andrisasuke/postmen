@@ -240,6 +240,14 @@ pub async fn save_request(
     .await
 }
 #[tauri::command]
+pub async fn save_and_move_requests(
+    window: WebviewWindow,
+    db: State<'_, Database>,
+    input: SaveAndMoveRequests,
+) -> AppResult<Vec<RequestDoc>> {
+    work(window, db.inner().clone(), move |c| repo::save_and_move_requests(c, input)).await
+}
+#[tauri::command]
 pub async fn reorder_items(
     window: WebviewWindow,
     db: State<'_, Database>,

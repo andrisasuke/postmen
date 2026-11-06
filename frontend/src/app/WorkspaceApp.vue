@@ -79,6 +79,7 @@ const sidebar = ref<InstanceType<typeof WorkspaceSidebar>>();
 const pendingClose = ref<string | null>(null);
 const deleting = ref<TreeRef | null>(null);
 const moving = ref<TreeRef | null>(null);
+const movingRequests = ref<{ ids: string[]; targetId: string } | null>(null);
 const destination = ref<string | null>(null);
 const reloading = ref<string | null>(null);
 const modalError = ref("");
@@ -138,6 +139,7 @@ const modalOpen = computed(
     pendingClose.value !== null ||
     deleting.value !== null ||
     moving.value !== null ||
+    movingRequests.value !== null ||
     reloading.value !== null,
 );
 const workspaceSelectionDisabled = computed(() => modalOpen.value || !store.ready || store.loading
@@ -330,6 +332,23 @@ function askMove(item: TreeRef) {
   moving.value = item;
   destination.value = null;
   modalError.value = "";
+}
+async function askMoveRequests(ids: string[], targetId: string) {
+  modalError.value = "";
+  if (!ids.some(id => store.dirty(id))) {
+    try { await store.saveAndMoveRequests(ids, targetId); }
+    catch (e) { store.error = errorMessage(e); }
+    return;
+  }
+  movingRequests.value = { ids, targetId };
+}
+const dirtyMovingRequests = computed(() => movingRequests.value?.ids.filter(id => store.dirty(id)) ?? []);
+async function saveAndMoveRequests() {
+  if (!movingRequests.value || busy.value) return;
+  busy.value = true; modalError.value = "";
+  try { await store.saveAndMoveRequests(movingRequests.value.ids, movingRequests.value.targetId); sidebar.value?.revealFolder(movingRequests.value.targetId); movingRequests.value = null; }
+  catch (e) { modalError.value = errorMessage(e); }
+  finally { busy.value = false; }
 }
 async function moveItem() {
   if (!moving.value) return;
@@ -582,6 +601,7 @@ onUnmounted(() => {
           modalError = '';
         "
         @move="askMove"
+        @move-requests="askMoveRequests"
         @about="about = true"
         @import="importing = true"
         @export="exporting = true"
@@ -856,6 +876,15 @@ onUnmounted(() => {
         ></template
       ></UiModal
     >
+    <UiModal
+      :open="movingRequests !== null"
+      title="Save changes before moving?"
+      @close="!busy && (movingRequests = null)"
+    ><p v-if="dirtyMovingRequests.length">Save changes to these requests before moving?</p>
+      <ul v-if="dirtyMovingRequests.length" class="quit-drafts"><li v-for="id in dirtyMovingRequests" :key="id">{{ store.tabs[id]?.draft.name }}</li></ul>
+      <p v-if="modalError" class="inline-error" role="alert">{{ modalError }}</p>
+      <template #footer><UiButton data-autofocus :disabled="busy" @click="movingRequests = null">Cancel</UiButton><UiButton variant="primary" :disabled="busy" @click="saveAndMoveRequests">{{ busy ? 'Saving…' : 'Save All & Move' }}</UiButton></template>
+    </UiModal>
     <UiModal
       :open="moving !== null"
       title="Move to folder"

@@ -75,7 +75,7 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
         let mut existing = request(c, &collection.id, None);
         existing.headers.push(row("X-Existing", "keep"));
         let saved = repo::save_request(c, existing)?;
-        let duplicated_row = saved.headers[0].clone();
+        c.execute_batch("CREATE TRIGGER fail_import_header BEFORE INSERT ON request_headers BEGIN SELECT RAISE(ABORT,'test failure'); END;")?;
         let failed = repo::create_request(
             c,
             CreateRequest {
@@ -88,7 +88,7 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
                     body_kind: "json".into(),
                     body: "{}".into(),
                     params: vec![row("inserted-first", "rollback")],
-                    headers: vec![duplicated_row],
+                    headers: vec![row("X-Imported", "rollback")],
                     form_data: vec![],
                 }),
             },
@@ -104,6 +104,76 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn save_and_move_requests_is_atomic_and_preserves_visible_input_order() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let target = repo::create_folder(c, CreateFolder { collection_id: collection.id.clone(), parent_id: None, name: "Target".into() })?;
+        let first = request(c, &collection.id, None);
+        let second = request(c, &collection.id, None);
+        let mut dirty = repo::get_request(c, &first.id)?;
+        dirty.body = "saved atomically".into();
+        let saved = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: target.id.clone(),
+            requests: vec![
+                MoveRequestItem { id: second.id.clone(), revision: second.revision, draft: None },
+                MoveRequestItem { id: first.id.clone(), revision: dirty.revision, draft: Some(dirty) },
+            ],
+        })?;
+        assert_eq!(saved.iter().map(|doc| doc.id.as_str()).collect::<Vec<_>>(), vec![second.id.as_str(), first.id.as_str()]);
+        assert_eq!(saved[0].position + 1, saved[1].position);
+        assert_eq!(repo::get_request(c, &first.id)?.body, "saved atomically");
+        let before = repo::workspace(c)?;
+        let conflict = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: target.id,
+            requests: vec![
+                MoveRequestItem { id: first.id, revision: saved[1].revision - 1, draft: None },
+                MoveRequestItem { id: second.id, revision: saved[0].revision, draft: None },
+            ],
+        });
+        assert_eq!(conflict.unwrap_err().code, "CONFLICT");
+        assert_eq!(
+            repo::workspace(c)?.requests.iter().map(|request| (&request.id, &request.folder_id, request.revision, request.position)).collect::<Vec<_>>(),
+            before.requests.iter().map(|request| (&request.id, &request.folder_id, request.revision, request.position)).collect::<Vec<_>>(),
+        );
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn save_and_move_requests_rolls_back_after_a_later_dirty_write_fails() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let target = repo::create_folder(c, CreateFolder { collection_id: collection.id.clone(), parent_id: None, name: "Target".into() })?;
+        let first_created = request(c, &collection.id, None);
+        let second_created = request(c, &collection.id, None);
+        let first = repo::get_request(c, &first_created.id)?;
+        let second = repo::get_request(c, &second_created.id)?;
+        let mut dirty_first = first.clone(); dirty_first.body = "first changed".into(); dirty_first.headers = vec![row("X-First", "one")];
+        let mut dirty_second = second.clone(); dirty_second.body = "second changed".into(); dirty_second.headers = vec![row("X-Second", "two")];
+        c.execute_batch(&format!("CREATE TRIGGER fail_second_move BEFORE INSERT ON request_headers WHEN NEW.request_id = '{}' BEGIN SELECT RAISE(ABORT,'second write failed'); END;", second.id))?;
+        let failure = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: target.id,
+            requests: vec![
+                MoveRequestItem { id: first.id.clone(), revision: first.revision, draft: Some(dirty_first) },
+                MoveRequestItem { id: second.id.clone(), revision: second.revision, draft: Some(dirty_second) },
+            ],
+        });
+        assert!(failure.is_err());
+        for original in [&first, &second] {
+            let current = repo::get_request(c, &original.id)?;
+            assert_eq!(current.body, original.body);
+            assert_eq!(current.revision, original.revision);
+            assert_eq!(current.position, original.position);
+            assert_eq!(current.folder_id, original.folder_id);
+            assert_eq!(current.headers.len(), original.headers.len());
+        }
+        Ok(())
+    }).unwrap();
 }
 
 #[test]

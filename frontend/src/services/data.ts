@@ -73,6 +73,7 @@ export const nativeDataApi: DataApi = {
   createRequest: (input) => call("create_request", { input }, requestSchema),
   getRequest: (id) => call("get_request", { id }, requestSchema),
   saveRequest: (input) => call("save_request", { input }, requestSchema),
+  saveAndMoveRequests: (input) => call("save_and_move_requests", { input }, z.array(requestSchema).max(100)),
   deleteRequest: (id) => call("delete_request", { id }, nothing),
   reorderItems: (input) => call("reorder_items", { input }, nothing),
   saveEnvironment: (input) => call("save_environment", { input }, environmentSchema),

@@ -14,6 +14,7 @@ const emit = defineEmits<{
   open: [id: string];
   remove: [item: TreeRef];
   move: [item: TreeRef];
+  moveRequests: [ids: string[], targetId: string];
   about: [];
   import: [];
   export: [];
@@ -48,6 +49,14 @@ const field = ref<HTMLInputElement>();
 const menu = ref<InstanceType<typeof UiMenu>>();
 const contextItem = ref<TreeRef | null>(null);
 const dragging = ref<TreeRef | null>(null);
+const selectedRequestIds = ref<string[]>([]);
+type DropZone = "before" | "folder" | "after";
+const dropTarget = ref<{ id: string; kind: TreeKind; zone: DropZone } | null>(null);
+type DropDecision =
+  | { action: "none" }
+  | { action: "blocked"; message: string }
+  | { action: "move-to-folder" }
+  | { action: "reorder"; zone: "before" | "after" };
 interface TreeRow extends TreeRef {
   name: string;
   method?: string;
@@ -186,6 +195,7 @@ async function begin(
 defineExpose({
   hasPendingInput: computed(() => form.value !== null || busy.value),
   revealCollection: (id: string) => { search.value = ""; expanded.value[id] = true; },
+  revealFolder: (id: string) => { search.value = ""; expanded.value[id] = true; },
   createCollection: () => begin("collection"),
   createRequest: (parent: Parent) => begin("request", parent),
 });
@@ -207,9 +217,19 @@ async function submit() {
     busy.value = false;
   }
 }
-function click(row: TreeRow) {
-  if (row.kind === "request") emit("open", row.id);
+function click(event: MouseEvent, row: TreeRow) {
+  if (row.kind === "request") {
+    if (event.metaKey || event.ctrlKey) {
+      const selected = new Set(selectedRequestIds.value);
+      if (selected.has(row.id)) selected.delete(row.id); else selected.add(row.id);
+      selectedRequestIds.value = [...selected].filter(id => all.value.find(value => value.id === id)?.collectionId === row.collectionId);
+      return;
+    }
+    selectedRequestIds.value = [row.id];
+    emit("open", row.id);
+  }
   else {
+    selectedRequestIds.value = [];
     setExpanded(row.id, !isExpanded(row.id));
     store.selectedCollectionId = row.collectionId;
   }
@@ -256,30 +276,144 @@ async function contextAction(action: string) {
   }
 }
 function startDrag(event: DragEvent, row: TreeRow) {
+  if (row.kind === "request" && !selectedRequestIds.value.includes(row.id)) selectedRequestIds.value = [row.id];
   dragging.value = { kind: row.kind, id: row.id };
   event.dataTransfer?.setData("text/plain", row.id);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+function draggedRow() {
+  const source = dragging.value;
+  return source
+    ? all.value.find((row) => row.id === source.id && row.kind === source.kind)
+    : undefined;
+}
+function reorderZone(event: DragEvent): "before" | "after" {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const offset = rect.height ? (event.clientY - rect.top) / rect.height : .5;
+  return offset < .5 ? "before" : "after";
+}
+function canReorder(source: TreeRef, target: TreeRow) {
+  return source.id !== target.id && store.siblings(target).some(
+    (item) => item.id === source.id && item.kind === source.kind,
+  );
+}
+function canMoveToFolder(source: TreeRef, target: TreeRow) {
+  const sourceRow = draggedRow();
+  const selected = selectedRequestIds.value.map(id => all.value.find(row => row.id === id)).filter((row): row is TreeRow => !!row);
+  return source.kind === "request" && target.kind === "folder" && selected.length > 0 &&
+    selected.every(row => row.collectionId === target.collectionId) && sourceRow?.collectionId === target.collectionId &&
+    selected.some(row => row.parentId !== target.id);
+}
+function selectedInTreeOrder() {
+  const selected = new Set(selectedRequestIds.value);
+  const ids: string[] = [];
+  const visited = new Set<string>();
+  function children(collectionId: string, parentId: string | null) {
+    return all.value
+      .filter(row => row.kind !== "collection" && row.collectionId === collectionId && row.parentId === parentId)
+      .sort((a, b) => {
+        const position = (row: TreeRow) => row.kind === "folder"
+          ? (store.data.folders.find(folder => folder.id === row.id)?.position ?? 0)
+          : (store.data.requests.find(request => request.id === row.id)?.position ?? 0);
+        return position(a) - position(b) || a.id.localeCompare(b.id);
+      });
+  }
+  function walk(row: TreeRow) {
+    if (visited.has(row.id)) return;
+    visited.add(row.id);
+    if (row.kind === "request") {
+      if (selected.has(row.id)) ids.push(row.id);
+      return;
+    }
+    for (const child of children(row.collectionId, row.kind === "collection" ? null : row.id)) walk(child);
+  }
+  for (const collection of [...store.data.collections].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))) {
+    const row = all.value.find(value => value.kind === "collection" && value.id === collection.id);
+    if (row) walk(row);
+  }
+  return ids;
+}
+function dragBlockMessage(source: TreeRef) {
+  if (source.kind !== "request") return;
+  const selected = selectedRequestIds.value.length ? selectedRequestIds.value : [source.id];
+  if (selected.some(id => store.tabs[id]?.saving)) return "Wait for selected request saves to finish.";
+}
+function dropDecision(source: TreeRef | null, target: TreeRow, event: DragEvent): DropDecision {
+  if (!source) return { action: "none" };
+  // A request dropped anywhere on a folder always enters that folder. This
+  // avoids edge-zone ambiguity while preserving reordering on other rows.
+  if (source.kind === "request" && target.kind === "folder") {
+    if (!canMoveToFolder(source, target)) return { action: "none" };
+    const message = dragBlockMessage(source);
+    return message ? { action: "blocked", message } : { action: "move-to-folder" };
+  }
+  if (!canReorder(source, target)) return { action: "none" };
+  return { action: "reorder", zone: reorderZone(event) };
+}
+function showDragBlockMessage(message: string) {
+  if (store.error !== message) store.error = message;
+}
+function dragOver(event: DragEvent, target: TreeRow) {
+  const decision = dropDecision(dragging.value, target, event);
+  if (decision.action === "blocked") {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    dropTarget.value = null;
+    showDragBlockMessage(decision.message);
+    return;
+  }
+  if (decision.action === "none") {
+    dropTarget.value = null;
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dropTarget.value = {
+    id: target.id,
+    kind: target.kind,
+    zone: decision.action === "move-to-folder" ? "folder" : decision.zone,
+  };
+}
+function clearDropTarget(target?: TreeRow) {
+  if (!target || (dropTarget.value?.id === target.id && dropTarget.value.kind === target.kind))
+    dropTarget.value = null;
+}
+function dragLeave(event: DragEvent, target: TreeRow) {
+  if (event.target === event.currentTarget) clearDropTarget(target);
 }
 async function drop(event: DragEvent, target: TreeRow) {
   event.preventDefault();
   const source = dragging.value;
+  const decision = dropDecision(source, target, event);
   dragging.value = null;
-  if (!source || source.id === target.id) return;
-  const items = store.siblings(target);
-  if (!items.some((i) => i.id === source.id)) {
-    store.error = "Use Move to folder to move between parents or collections.";
+  clearDropTarget();
+  if (decision.action === "blocked") {
+    showDragBlockMessage(decision.message);
     return;
   }
-  const ordered = items.filter((i) => i.id !== source.id);
-  ordered.splice(
-    ordered.findIndex((i) => i.id === target.id),
-    0,
-    source,
-  );
+  if (!source || decision.action === "none") return;
   try {
+    if (decision.action === "move-to-folder") {
+      const ids = selectedInTreeOrder();
+      if (ids.some(id => store.dirty(id))) emit("moveRequests", ids, target.id);
+      else {
+        await store.saveAndMoveRequests(ids, target.id);
+        setExpanded(target.id, true);
+      }
+      return;
+    }
+    const items = store.siblings(target);
+    const ordered = items.filter((item) => item.id !== source.id);
+    const index = ordered.findIndex((item) => item.id === target.id);
+    ordered.splice(decision.zone === "before" ? index : index + 1, 0, source);
     await store.reorderSiblings(target, ordered);
   } catch (e) {
     store.error = errorMessage(e);
   }
+}
+function isDropTarget(row: TreeRow, zone: DropZone) {
+  return dropTarget.value?.id === row.id &&
+    dropTarget.value.kind === row.kind && dropTarget.value.zone === zone;
 }
 function resize(event: PointerEvent) {
   settings.preferences.sidebarWidth = clamp(event.clientX, 220, 600);
@@ -418,8 +552,12 @@ onBeforeUnmount(stop);
           type="button"
           class="data-tree-row has-actions"
           :class="{
-            selected: row.kind === 'request' && store.activeId === row.id,
+            selected: row.kind === 'request' && selectedRequestIds.includes(row.id),
+            active: row.kind === 'request' && store.activeId === row.id,
             'collection-row': row.kind === 'collection',
+            'drop-before': isDropTarget(row, 'before'),
+            'folder-drop-target': isDropTarget(row, 'folder'),
+            'drop-after': isDropTarget(row, 'after'),
           }"
           :style="{ paddingLeft: `${12 + row.depth * 16}px` }"
           :aria-expanded="
@@ -433,13 +571,14 @@ onBeforeUnmount(stop);
               : undefined
           "
           draggable="true"
-          @click="click(row)"
+          @click="click($event, row)"
           @contextmenu="context($event, row)"
           @keydown.shift.f10="context($event, row)"
           @dragstart="startDrag($event, row)"
-          @dragover.prevent
+          @dragover="dragOver($event, row)"
+          @dragleave="dragLeave($event, row)"
           @drop="drop($event, row)"
-          @dragend="dragging = null"
+          @dragend="dragging = null; clearDropTarget()"
         >
           <span
             v-for="level in row.depth"

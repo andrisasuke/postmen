@@ -491,6 +491,46 @@ describe("M2 workspace drafts and persistence", () => {
     expect(store.tabs[a.id]!.draft.folderId).toBe(folder.id);
     expect(store.dirty(a.id)).toBe(false);
   });
+  it("atomically saves dirty selected requests and moves them in supplied order", async () => {
+    const { a, b, parent } = await pair();
+    const folder = await store.createFolder(parent, "Folder");
+    store.tabs[a.id]!.draft.body = "saved with move";
+    await store.saveAndMoveRequests([b.id, a.id], folder.id);
+    expect(store.data.requests.filter(request => request.folderId === folder.id).sort((x, y) => x.position - y.position).map(request => request.id)).toEqual([b.id, a.id]);
+    expect(store.tabs[a.id]!.saved.body).toBe("saved with move");
+    expect(store.dirty(a.id)).toBe(false);
+  });
+  it("keeps every draft and summary unchanged when batch move fails", async () => {
+    const { a, b, parent } = await pair();
+    const folder = await store.createFolder(parent, "Folder");
+    store.tabs[a.id]!.draft.body = "keep me";
+    const before = clone(store.data);
+    vi.spyOn(api, "saveAndMoveRequests").mockRejectedValueOnce(new Error("disk unavailable"));
+    await expect(store.saveAndMoveRequests([a.id, b.id], folder.id)).rejects.toThrow("disk unavailable");
+    expect(store.data).toEqual(before);
+    expect(store.tabs[a.id]!.draft.body).toBe("keep me");
+    expect(store.tabs[a.id]!.saving).toBe(false);
+  });
+  it("keeps already-target children in place while saving them and appending only moved requests", async () => {
+    const { a, b, parent } = await pair();
+    const folder = await store.createFolder(parent, "Folder");
+    await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
+    const originalPosition = store.data.requests.find(request => request.id === a.id)!.position;
+    store.tabs[a.id]!.draft.body = "save in place";
+    await store.saveAndMoveRequests([b.id, a.id], folder.id);
+    const moved = store.data.requests.filter(request => request.folderId === folder.id).sort((left, right) => left.position - right.position);
+    expect(moved.map(request => request.id)).toEqual([a.id, b.id]);
+    expect(moved[0]!.position).toBe(originalPosition);
+    expect(store.tabs[a.id]!.saved.body).toBe("save in place");
+  });
+  it("treats an all-clean already-target selection as a silent no-op", async () => {
+    const { a, parent } = await pair();
+    const folder = await store.createFolder(parent, "Folder");
+    await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
+    const call = vi.spyOn(api, "saveAndMoveRequests");
+    await store.saveAndMoveRequests([a.id], folder.id);
+    expect(call).not.toHaveBeenCalled();
+  });
   it("deleting a selected environment clears selection, retaining request templates and draft bodies", async () => {
     const { a } = await pair();
     const env = await store.saveEnvironment({

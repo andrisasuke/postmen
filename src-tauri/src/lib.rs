@@ -283,6 +283,7 @@ pub fn run() {
             commands::create_request,
             commands::get_request,
             commands::save_request,
+            commands::save_and_move_requests,
             commands::delete_request,
             commands::reorder_items,
             commands::save_environment,

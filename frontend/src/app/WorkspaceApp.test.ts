@@ -111,3 +111,29 @@ it("shortcut Save updates the same Save icon status throughout pending save", as
   expect(button().attributes("aria-label")).toBe("Saving request");
   finish(); await flushPromises(); expect(button().classes()).not.toContain("save-request-dirty"); expect(store.dirty(a.id)).toBe(false);
 });
+it("shows only dirty selected requests and Save All & Move saves and moves them", async () => {
+  store.tabs[a.id]!.draft.body = "unsaved";
+  const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id, b.id], folder.id);
+  await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain(a.name);
+  expect(dialog.textContent).not.toContain(b.name);
+  expect(dialog.textContent).toContain("Save All & Move");
+  const save = vi.spyOn(api, "saveAndMoveRequests");
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Save All & Move"))!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
+  expect(save).toHaveBeenCalledOnce();
+  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
+  expect(store.data.requests.find(request => request.id === b.id)?.folderId).toBe(folder.id);
+});
+it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchanged", async () => {
+  store.tabs[a.id]!.draft.body = "keep draft";
+  const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], folder.id);
+  await flushPromises();
+  Array.from(document.querySelectorAll('[role="dialog"] button')).find(button => button.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
+  expect(store.tabs[a.id]!.draft.body).toBe("keep draft");
+  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBeNull();
+});

@@ -206,8 +206,22 @@ select:focus-visible {
 .data-tree-row.selected {
   background: var(--hover);
 }
+.data-tree-row.active .tree-name {
+  color: var(--primary);
+}
 .data-tree-row.has-actions {
   padding-right: 38px;
+}
+.data-tree-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--primary);
+}
+.data-tree-row.folder-drop-target {
+  background: var(--hover);
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.data-tree-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--primary);
 }
 .tree-row-actions.icon-button {
   position: absolute;

@@ -344,6 +344,57 @@ pub fn save_request(conn: &mut Connection, doc: RequestDoc) -> AppResult<Request
     tx.commit()?;
     Ok(saved)
 }
+pub fn save_and_move_requests(conn: &mut Connection, input: SaveAndMoveRequests) -> AppResult<Vec<RequestDoc>> {
+    if input.requests.is_empty() || input.requests.len() > 100 {
+        return Err(AppError::invalid("Choose between 1 and 100 requests to move."));
+    }
+    validation::id(&input.target_folder_id)?;
+    let tx = conn.transaction()?;
+    let mut seen = HashSet::new();
+    let mut collection: Option<String> = None;
+    let mut originals = Vec::with_capacity(input.requests.len());
+    for item in &input.requests {
+        validation::id(&item.id)?;
+        if !seen.insert(&item.id) { return Err(AppError::invalid("A request was selected more than once.")); }
+        let original = get_request(&tx, &item.id)?;
+        if original.revision != item.revision {
+            return Err(AppError::new("CONFLICT", "A selected request changed in another operation. Your drafts were kept."));
+        }
+        if let Some(draft) = &item.draft {
+            if draft.id != original.id || draft.collection_id != original.collection_id || draft.revision != original.revision {
+                return Err(AppError::new("CONFLICT", "A selected request changed in another operation. Your drafts were kept."));
+            }
+            validation::request(draft)?;
+        }
+        match &collection {
+            Some(id) if id != &original.collection_id => return Err(AppError::invalid("Requests cannot move between collections.")),
+            None => collection = Some(original.collection_id.clone()),
+            _ => {}
+        }
+        originals.push((item, original));
+    }
+    let collection = collection.ok_or_else(|| AppError::invalid("Choose requests to move."))?;
+    require_parent(&tx, &collection, Some(&input.target_folder_id))?;
+    let mut position = next_position(&tx, &collection, Some(&input.target_folder_id))?;
+    let mut saved = Vec::with_capacity(originals.len());
+    for (item, original) in originals {
+        let moving = original.folder_id.as_deref() != Some(&input.target_folder_id);
+        if !moving && item.draft.is_none() {
+            saved.push(original);
+            continue;
+        }
+        let mut doc = item.draft.clone().unwrap_or(original.clone());
+        doc.folder_id = Some(input.target_folder_id.clone());
+        doc.position = if moving { position } else { original.position };
+        validation::request(&doc)?;
+        tx.execute("UPDATE requests SET folder_id=?1,name=?2,method=?3,url=?4,body_kind=?5,body=?6,position=?7,revision=revision+1,updated_at=?8 WHERE id=?9", params![doc.folder_id,validation::name(&doc.name)?,doc.method,doc.url,doc.body_kind,doc.body,doc.position,now(),doc.id])?;
+        if item.draft.is_some() { write_request_rows(&tx, &doc)?; }
+        saved.push(get_request(&tx, &doc.id)?);
+        if moving { position += 1; }
+    }
+    tx.commit()?;
+    Ok(saved)
+}
 pub(crate) fn write_request_rows(tx: &Connection, doc: &RequestDoc) -> AppResult<()> {
     for (table, values) in [
         ("request_params", &doc.params),

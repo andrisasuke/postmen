@@ -217,3 +217,16 @@ pub struct Reorder {
     pub parent_id: Option<String>,
     pub items: Vec<TreeRef>,
 }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveRequestItem {
+    pub id: String,
+    pub revision: i64,
+    pub draft: Option<RequestDoc>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveAndMoveRequests {
+    pub target_folder_id: String,
+    pub requests: Vec<MoveRequestItem>,
+}

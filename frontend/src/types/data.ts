@@ -135,6 +135,10 @@ export interface ReorderInput {
   parentId: string | null;
   items: TreeRef[];
 }
+export interface SaveAndMoveRequestsInput {
+  targetFolderId: string;
+  requests: Array<{ id: string; revision: number; draft: RequestDoc | null }>;
+}
 export interface EnvironmentInput {
   id: string | null;
   collectionId: string | null;
@@ -162,6 +166,7 @@ export interface DataApi {
   }): Promise<RequestDoc>;
   getRequest(id: string): Promise<RequestDoc>;
   saveRequest(input: RequestDoc): Promise<RequestDoc>;
+  saveAndMoveRequests(input: SaveAndMoveRequestsInput): Promise<RequestDoc[]>;
   deleteRequest(id: string): Promise<void>;
   reorderItems(input: ReorderInput): Promise<void>;
   saveEnvironment(input: EnvironmentInput): Promise<Environment>;

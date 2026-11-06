@@ -11,6 +11,15 @@ let wrapper: VueWrapper;
 let api: ReturnType<typeof createMemoryApi>;
 const row = (name: string) => wrapper.findAll(".data-tree-row").find(node => node.get(".tree-name").text() === name)!;
 const menuItem = (label: string) => document.querySelector<HTMLButtonElement>(`[role="menuitem"][aria-label="${label}"]`);
+async function drag(source: string, target: string, clientY = 50) {
+  const destination = row(target);
+  vi.spyOn(destination.element, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100 } as DOMRect);
+  await row(source).trigger("dragstart");
+  await destination.trigger("dragover", { clientY });
+  await flushPromises();
+  await destination.trigger("drop", { clientY });
+  await flushPromises();
+}
 async function openMenu(name: string) {
   await wrapper.get(`button[aria-label="Actions for ${name}"]`).trigger("click");
   await flushPromises();
@@ -127,7 +136,7 @@ it("does not refocus the ellipsis after pointer collapse/expand at any folder de
   for (const name of ["Subfolder", "Folder", "Collection"]) {
     const trigger = wrapper.get(`button[aria-label="Actions for ${name}"]`);
     for (const label of ["Collapse", "Expand"]) {
-      await trigger.trigger("click", { detail: 1 });
+      trigger.element.dispatchEvent(new MouseEvent("click", { detail: 1, bubbles: true }));
       await flushPromises();
       menuItem(label)!.focus();
       menuItem(label)!.dispatchEvent(new MouseEvent("click", { detail: 1, bubbles: true }));
@@ -147,7 +156,7 @@ it("restores ellipsis focus after keyboard selection and Escape", async () => {
   menuItem("Collapse")!.click();
   await flushPromises();
   expect(document.activeElement).toBe(trigger.element);
-  await trigger.trigger("click", { detail: 1 });
+  trigger.element.dispatchEvent(new MouseEvent("click", { detail: 1, bubbles: true }));
   await flushPromises();
   document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   await flushPromises();
@@ -187,4 +196,163 @@ it("does not offer expansion actions for requests or persist a data mutation", a
   await action("Collection", "Collapse");
   expect(JSON.stringify(store.data)).toBe(before);
   expect(wrapper.emitted("open")).toBeUndefined();
+});
+it("moves a request dropped anywhere on a folder row into that folder", async () => {
+  const store = useWorkspaceStore();
+  const folderId = store.data.folders.find(folder => folder.name === "Folder")!.id;
+  const subfolderId = store.data.folders.find(folder => folder.name === "Subfolder")!.id;
+  const collectionId = store.data.folders.find(folder => folder.id === folderId)!.collectionId;
+  for (const [name, clientY] of [["Top edge", 5], ["Middle", 50], ["Bottom edge", 95]] as const) {
+    const request = await store.createRequest({ collectionId, parentId: null }, name);
+    await flushPromises();
+    await drag(name, "Folder", clientY);
+    expect(store.data.requests.find(value => value.id === request.id)?.folderId).toBe(folderId);
+  }
+  expect(store.siblings({ kind: "folder", id: subfolderId }).map(item => item.kind)).toEqual([
+    "folder", "request", "request", "request",
+  ]);
+});
+it("moves a request into a nested folder, appending after its existing child", async () => {
+  const store = useWorkspaceStore();
+  const subfolderId = store.data.folders.find(folder => folder.name === "Subfolder")!.id;
+  const nestedRequestId = store.data.requests.find(request => request.name === "Nested request")!.id;
+  const rootRequestId = store.data.requests.find(request => request.name === "Root request")!.id;
+  await action("Subfolder", "Collapse");
+  expect(row("Subfolder").attributes("aria-expanded")).toBe("false");
+  await drag("Root request", "Subfolder");
+  expect(store.data.requests.find(request => request.id === rootRequestId)?.folderId).toBe(subfolderId);
+  expect(store.siblings({ kind: "request", id: nestedRequestId })).toEqual([
+    { kind: "request", id: nestedRequestId },
+    { kind: "request", id: rootRequestId },
+  ]);
+  expect(row("Subfolder").attributes("aria-expanded")).toBe("true");
+});
+it("reorders siblings from the top and bottom drop zones", async () => {
+  const store = useWorkspaceStore();
+  const rootRequestId = store.data.requests.find(request => request.name === "Root request")!.id;
+  const collectionId = store.data.requests.find(request => request.id === rootRequestId)!.collectionId;
+  const other = await store.createRequest({ collectionId, parentId: null }, "Other root request");
+  await flushPromises();
+  await drag("Root request", "Other root request", 5);
+  let siblings = store.siblings({ kind: "request", id: other.id }).map(item => item.id);
+  expect(siblings.indexOf(rootRequestId)).toBeLessThan(siblings.indexOf(other.id));
+  await drag("Root request", "Other root request", 95);
+  siblings = store.siblings({ kind: "request", id: other.id }).map(item => item.id);
+  expect(siblings.indexOf(rootRequestId)).toBeGreaterThan(siblings.indexOf(other.id));
+});
+it("does not mutate for cross-collection or same-parent folder drops", async () => {
+  const store = useWorkspaceStore();
+  const other = await store.createCollection("Other collection");
+  await store.createFolder({ collectionId: other.id, parentId: null }, "Other folder");
+  await flushPromises();
+  const before = JSON.stringify(store.data);
+  await row("Root request").trigger("dragstart");
+  await row("Other folder").trigger("dragover");
+  expect(row("Other folder").classes()).not.toContain("folder-drop-target");
+  await row("Other folder").trigger("drop");
+  await flushPromises();
+  await drag("Nested request", "Subfolder");
+  expect(JSON.stringify(store.data)).toBe(before);
+});
+it("guides a dirty request to a valid folder and asks the app to confirm the move", async () => {
+  const store = useWorkspaceStore();
+  const nested = store.data.requests.find(request => request.name === "Nested request")!;
+  const other = await store.createCollection("Other collection");
+  await store.createFolder({ collectionId: other.id, parentId: null }, "Other folder");
+  store.tabs[nested.id]!.draft.body = "unsaved";
+  await row("Nested request").trigger("dragstart");
+  for (const target of ["Root request", "Collection", "Other folder", "Subfolder"]) {
+    await row(target).trigger("dragover");
+    expect(store.error).toBe("");
+  }
+  await row("Folder").trigger("dragover");
+  expect(row("Folder").classes()).toContain("folder-drop-target");
+  await row("Folder").trigger("drop");
+  await flushPromises();
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], store.data.folders.find(folder => folder.name === "Folder")!.id]);
+  expect(store.data.requests.find(request => request.id === nested.id)?.folderId).toBe(store.tabs[nested.id]!.saved.folderId);
+});
+it("uses the same blocked folder-drop decision for dragover and drop", async () => {
+  const store = useWorkspaceStore();
+  const root = store.data.requests.find(request => request.name === "Root request")!;
+  const folderId = store.data.folders.find(folder => folder.name === "Folder")!.id;
+  store.tabs[root.id]!.draft.body = "unsaved";
+  await drag("Root request", "Folder", 5);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[root.id], folderId]);
+  await row("Root request").trigger("dragstart");
+  store.tabs[root.id]!.saving = true;
+  const beforeSavingFolderMove = JSON.stringify(store.data);
+  await row("Folder").trigger("dragover", { clientY: 95 });
+  expect(row("Folder").classes()).not.toContain("folder-drop-target");
+  expect(store.error).toBe("Wait for selected request saves to finish.");
+  await row("Folder").trigger("drop", { clientY: 95 });
+  await flushPromises();
+  expect(store.error).toBe("Wait for selected request saves to finish.");
+  expect(JSON.stringify(store.data)).toBe(beforeSavingFolderMove);
+  store.tabs[root.id]!.saving = false;
+  store.discard(root.id);
+  vi.spyOn(api, "saveAndMoveRequests").mockRejectedValueOnce(new Error("disk unavailable"));
+  await drag("Root request", "Folder");
+  expect(store.data.requests.find(request => request.id === root.id)?.folderId).toBeNull();
+  expect(store.error).toBe("disk unavailable");
+});
+it("does not mutate workspace data when a drag is cancelled or dropped outside a row", async () => {
+  const store = useWorkspaceStore();
+  const before = JSON.stringify(store.data);
+  await row("Root request").trigger("dragstart");
+  await row("Root request").trigger("dragend");
+  await wrapper.get(".data-tree").trigger("drop");
+  await flushPromises();
+  expect(JSON.stringify(store.data)).toBe(before);
+});
+it("toggles Cmd/Ctrl request selection without opening and drags all selected requests", async () => {
+  const store = useWorkspaceStore();
+  const root = store.data.requests.find(request => request.name === "Root request")!;
+  const nested = store.data.requests.find(request => request.name === "Nested request")!;
+  const folder = store.data.folders.find(value => value.name === "Folder")!;
+  await store.open(root.id);
+  await row("Root request").trigger("click", { metaKey: true });
+  await row("Nested request").trigger("click", { ctrlKey: true });
+  expect(row("Root request").classes()).toContain("selected");
+  expect(row("Nested request").classes()).toContain("selected");
+  expect(wrapper.emitted("open")).toBeUndefined();
+  expect(store.activeId).toBe(root.id);
+  await row("Root request").trigger("dragstart");
+  await row("Folder").trigger("drop");
+  await flushPromises();
+  expect(store.data.requests.find(value => value.id === root.id)?.folderId).toBe(folder.id);
+  expect(store.data.requests.find(value => value.id === nested.id)?.folderId).toBe(folder.id);
+});
+it("sends selected request IDs in tree display order rather than click order", async () => {
+  const store = useWorkspaceStore();
+  const root = store.data.requests.find(request => request.name === "Root request")!;
+  const nested = store.data.requests.find(request => request.name === "Nested request")!;
+  const folder = store.data.folders.find(value => value.name === "Folder")!;
+  store.tabs[nested.id]!.draft.body = "requires confirmation";
+  await row("Root request").trigger("click", { metaKey: true });
+  await row("Nested request").trigger("click", { ctrlKey: true });
+  await row("Root request").trigger("dragstart");
+  await row("Folder").trigger("drop");
+  await flushPromises();
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], folder.id]);
+});
+it("keeps collapsed and search-hidden selections in a dirty Save All & Move request", async () => {
+  const store = useWorkspaceStore();
+  const root = store.data.requests.find(request => request.name === "Root request")!;
+  const nested = store.data.requests.find(request => request.name === "Nested request")!;
+  const folder = store.data.folders.find(value => value.name === "Folder")!;
+  store.tabs[nested.id]!.draft.body = "requires confirmation";
+  await row("Root request").trigger("click", { metaKey: true });
+  await row("Nested request").trigger("click", { ctrlKey: true });
+  await action("Folder", "Collapse");
+  expect(row("Nested request")).toBeUndefined();
+  await drag("Root request", "Folder", 5);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], folder.id]);
+
+  await action("Folder", "Expand");
+  await wrapper.get('button[aria-label="Search collections"]').trigger("click");
+  await wrapper.get('input[aria-label="Search collections"]').setValue("Subfolder");
+  expect(row("Root request")).toBeUndefined();
+  await drag("Nested request", "Folder", 95);
+  expect(wrapper.emitted("moveRequests")?.[1]).toEqual([[nested.id, root.id], folder.id]);
 });

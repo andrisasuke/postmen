@@ -730,6 +730,38 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
+  async function saveAndMoveRequests(ids: string[], targetFolderId: string) {
+    const unique = [...new Set(ids)];
+    const target = data.value.folders.find(folder => folder.id === targetFolderId);
+    if (!target || !unique.length) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    const summaries = unique.map(id => data.value.requests.find(request => request.id === id));
+    if (summaries.some(request => !request || request.collectionId !== target.collectionId))
+      throw new DataError("INVALID_INPUT", "Select requests from one collection and a folder in that collection.");
+    if (summaries.every(request => request?.folderId === targetFolderId) && !unique.some(id => dirty(id))) return;
+    if (unique.some(id => tabs[id]?.saving)) throw new DataError("BUSY", "Wait for selected request saves to finish.");
+    const locked = unique.flatMap(id => tabs[id] ? [tabs[id]!] : []);
+    for (const tab of locked) tab.saving = true;
+    const submitted = unique.map(id => {
+      const tab = tabs[id]; const request = data.value.requests.find(value => value.id === id)!;
+      return { id, revision: tab?.saved.revision ?? request.revision, draft: tab && dirty(id) ? clone(tab.draft) : null };
+    });
+    try {
+      const saved = await backend().saveAndMoveRequests({ targetFolderId, requests: submitted });
+      for (const doc of saved) {
+        updateSummary(doc);
+        const tab = tabs[doc.id];
+        const original = submitted.find(item => item.id === doc.id)!;
+        if (!tab) continue;
+        tab.saved = clone(doc);
+        if (editable(tab.draft) === editable(original.draft ?? tab.saved)) tab.draft = clone(doc);
+        else { tab.draft.folderId = doc.folderId; tab.draft.position = doc.position; tab.draft.revision = doc.revision; tab.draft.updatedAt = doc.updatedAt; }
+      }
+      notifications.success("Requests moved successfully");
+    } catch (e) {
+      notifications.error("Failed to move requests");
+      throw e;
+    } finally { for (const tab of locked) tab.saving = false; }
+  }
   function selectedEnvironment(collectionId: string | null) {
     const selected = data.value.environmentSelections.find(s => s.collectionId === collectionId)?.environmentId;
     return data.value.environments.find(e => e.id === selected && e.collectionId === collectionId);
@@ -816,6 +848,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     moveSibling,
     reorderSiblings: notifyMutation(reorderSiblings, (item, items) => ({ success: unchangedOrder(item, items) ? null : "Order updated successfully", error: "Failed to update order" })),
     moveToFolder: notifyMutation(moveToFolder, (item, parentId) => ({ success: unchangedParent(item, parentId) ? null : `${item.kind === "folder" ? "Folder" : "Request"} moved successfully`, error: `Failed to move ${item.kind}` })),
+    saveAndMoveRequests,
     environmentBusy,
     transitioning,
     pendingOperations,

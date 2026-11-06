@@ -20,6 +20,7 @@
     "allow-create-request",
     "allow-get-request",
     "allow-save-request",
+    "allow-save-and-move-requests",
     "allow-delete-request",
     "allow-reorder-items",
     "allow-save-environment",
