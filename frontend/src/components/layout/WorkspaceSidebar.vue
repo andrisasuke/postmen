@@ -613,7 +613,7 @@ onBeforeUnmount(stop);
             >{{ row.method }}</span
           ><AppIcon
             v-else
-            :name="isExpanded(row.id) ? 'down' : 'right'"
+            :name="isExpanded(row.id) ? 'folderOpenFilled' : 'folderFilled'"
           />
           <span class="tree-name">{{ row.name }}</span
           ><span

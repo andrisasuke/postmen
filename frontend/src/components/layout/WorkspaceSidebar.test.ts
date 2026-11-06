@@ -93,6 +93,15 @@ it("offers the correct Expand/Collapse action for collections, folders and subfo
     expect(row("Nested request")).toBeDefined();
   }
 });
+it("switches expandable collection and folder rows between open and closed filled folders", async () => {
+  for (const name of ["Folder", "Collection"]) {
+    expect(row(name).get(".app-icon").classes()).toContain("tabler-icon-folder-open-filled");
+    await row(name).trigger("click");
+    expect(row(name).get(".app-icon").classes()).toContain("tabler-icon-folder-filled");
+    await row(name).trigger("click");
+    expect(row(name).get(".app-icon").classes()).toContain("tabler-icon-folder-open-filled");
+  }
+});
 it("keeps child expansion state when collapsing and reopening its parent", async () => {
   await action("Subfolder", "Collapse");
   await action("Collection", "Collapse");
