@@ -6,6 +6,7 @@ import type {
   DataApi,
   EnvironmentInput,
   NewRequestContent,
+  MoveDestination,
   Parent,
   RequestDoc,
   RequestSummary,
@@ -730,7 +731,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
-  async function saveAndMoveRequests(ids: string[], targetFolderId: string | null, anchorId: string | null = null, insertAfter = false) {
+  async function saveAndMoveRequests(ids: string[], destination: MoveDestination) {
+    const targetFolderId = destination.targetFolderId;
+    const anchorId = destination.kind === "request" ? destination.anchorId : null;
+    const insertAfter = destination.kind === "request" && destination.insertAfter;
     const unique = [...new Set(ids)];
     if (!unique.length) throw new DataError("INVALID_INPUT", "Choose requests to move.");
     const summaries = unique.map(id => data.value.requests.find(request => request.id === id));

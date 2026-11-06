@@ -135,6 +135,9 @@ export interface ReorderInput {
   parentId: string | null;
   items: TreeRef[];
 }
+export type MoveDestination =
+  | { kind: "container"; targetFolderId: string | null }
+  | { kind: "request"; targetFolderId: string | null; anchorId: string; insertAfter: boolean };
 export interface SaveAndMoveRequestsInput {
   targetFolderId: string | null;
   anchorId?: string | null;

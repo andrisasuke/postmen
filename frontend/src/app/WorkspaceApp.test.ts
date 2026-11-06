@@ -115,7 +115,7 @@ it("shows only dirty selected requests and Save All & Move saves and moves them"
   store.tabs[a.id]!.draft.body = "unsaved";
   const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
   const target = await store.createRequest({ collectionId: a.collectionId, parentId: folder.id }, "Target");
-  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id, b.id], folder.id, target.id, false);
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id, b.id, target.id], { kind: "request", targetFolderId: folder.id, anchorId: target.id, insertAfter: false });
   await flushPromises();
   const dialog = document.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain(a.name);
@@ -128,6 +128,7 @@ it("shows only dirty selected requests and Save All & Move saves and moves them"
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ anchorId: target.id, insertAfter: false }));
   expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
   expect(store.data.requests.find(request => request.id === b.id)?.folderId).toBe(folder.id);
+  expect(store.data.requests.find(request => request.id === target.id)?.folderId).toBe(folder.id);
   expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toEqual([a.id, b.id, target.id]);
 });
 it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchanged", async () => {
@@ -135,7 +136,7 @@ it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchan
   await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
   const target = await store.createRequest({ collectionId: a.collectionId, parentId: folder.id }, "Target");
   store.tabs[a.id]!.draft.body = "keep draft";
-  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], null, target.id, false);
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], { kind: "request", targetFolderId: null, anchorId: target.id, insertAfter: false });
   await flushPromises();
   Array.from(document.querySelectorAll('[role="dialog"] button')).find(button => button.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await flushPromises();

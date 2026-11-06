@@ -278,11 +278,11 @@ export function createMemoryApi(persist = false): DataApi {
         const selectedIds = new Set(selected.map(({ old }) => old.id));
         const items: TreeRef[] = [
           ...data.folders.filter(folder => folder.collectionId === collectionId && folder.parentId === input.targetFolderId).map(folder => ({ kind: "folder" as const, id: folder.id, position: folder.position })),
-          ...Object.values(requests).filter(request => request.collectionId === collectionId && request.folderId === input.targetFolderId && (!input.anchorId || !selectedIds.has(request.id))).map(request => ({ kind: "request" as const, id: request.id, position: request.position })),
+          ...Object.values(requests).filter(request => request.collectionId === collectionId && request.folderId === input.targetFolderId && (!input.anchorId || !selectedIds.has(request.id) || request.id === input.anchorId)).map(request => ({ kind: "request" as const, id: request.id, position: request.position })),
         ].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
         const anchor = input.anchorId ? items.findIndex(item => item.kind === "request" && item.id === input.anchorId) : items.length;
         if (anchor < 0) throw new DataError("INVALID_INPUT", "The request you dropped beside is no longer in the destination folder.");
-        items.splice(anchor + (input.insertAfter ? 1 : 0), 0, ...selected.filter(({ old }) => !!input.anchorId || old.folderId !== input.targetFolderId).map(({ old }) => ({ kind: "request" as const, id: old.id, position: 0 })));
+        items.splice(anchor + (input.insertAfter ? 1 : 0), 0, ...selected.filter(({ old }) => (!!input.anchorId || old.folderId !== input.targetFolderId) && old.id !== input.anchorId).map(({ old }) => ({ kind: "request" as const, id: old.id, position: 0 })));
         const positions = new Map(items.map((item, position) => [item.id, position]));
         const saved = selected.map(({ old, draft }) => {
           const moving = old.folderId !== input.targetFolderId;

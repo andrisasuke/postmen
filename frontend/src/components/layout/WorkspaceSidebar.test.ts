@@ -275,7 +275,7 @@ it("guides a dirty request to a valid folder and asks the app to confirm the mov
   expect(row("Folder").classes()).toContain("folder-drop-target");
   await row("Folder").trigger("drop");
   await flushPromises();
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], store.data.folders.find(folder => folder.name === "Folder")!.id]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], { kind: "container", targetFolderId: store.data.folders.find(folder => folder.name === "Folder")!.id }]);
   expect(store.data.requests.find(request => request.id === nested.id)?.folderId).toBe(store.tabs[nested.id]!.saved.folderId);
 });
 it("moves requests outward onto ancestor folders and the collection root", async () => {
@@ -343,6 +343,30 @@ it("moves a request from PRF into PO immediately before PO Target Stock", async 
     earlier.id, source.id, target.id, later.id,
   ]);
 });
+it("keeps a selected request-row anchor while moving the rest of a multi-selection before it", async () => {
+  const store = useWorkspaceStore();
+  const source = store.data.requests.find(request => request.name === "Nested request")!;
+  const collectionId = source.collectionId;
+  const po = await store.createFolder({ collectionId, parentId: null }, "PO");
+  const target = await store.createRequest({ collectionId, parentId: po.id }, "PO Target Stock");
+  await row("PO Target Stock").trigger("click", { metaKey: true });
+  await row("Nested request").trigger("click", { ctrlKey: true });
+  await drag("Nested request", "PO Target Stock", 5);
+  expect(store.data.requests.find(request => request.id === target.id)?.folderId).toBe(po.id);
+  expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toEqual([source.id, target.id]);
+});
+it("retains a selected request-row anchor in a dirty Save All & Move destination", async () => {
+  const store = useWorkspaceStore();
+  const source = store.data.requests.find(request => request.name === "Nested request")!;
+  const collectionId = source.collectionId;
+  const po = await store.createFolder({ collectionId, parentId: null }, "PO");
+  const target = await store.createRequest({ collectionId, parentId: po.id }, "PO Target Stock");
+  store.tabs[source.id]!.draft.body = "dirty";
+  await row("PO Target Stock").trigger("click", { metaKey: true });
+  await row("Nested request").trigger("click", { ctrlKey: true });
+  await drag("Nested request", "PO Target Stock", 5);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[source.id, target.id], { kind: "request", targetFolderId: po.id, anchorId: target.id, insertAfter: false }]);
+});
 it("uses the dirty Save All & Move warning for outward request-row destinations", async () => {
   const store = useWorkspaceStore();
   const folder = store.data.folders.find(value => value.name === "Folder")!;
@@ -350,7 +374,7 @@ it("uses the dirty Save All & Move warning for outward request-row destinations"
   const parentRequest = await store.createRequest({ collectionId: folder.collectionId, parentId: folder.id }, "Parent-level request");
   store.tabs[nested.id]!.draft.body = "confirm outward move";
   await drag("Nested request", "Parent-level request");
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], folder.id, parentRequest.id, true]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id], { kind: "request", targetFolderId: folder.id, anchorId: parentRequest.id, insertAfter: true }]);
   expect(store.data.requests.find(request => request.id === nested.id)?.folderId).not.toBe(parentRequest.id);
 });
 it("sends dirty multi-selection to the collection root in tree order", async () => {
@@ -361,7 +385,7 @@ it("sends dirty multi-selection to the collection root in tree order", async () 
   await row("Root request").trigger("click", { metaKey: true });
   await row("Nested request").trigger("click", { ctrlKey: true });
   await drag("Nested request", "Collection", 95);
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], null]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], { kind: "container", targetFolderId: null }]);
 });
 it("uses the same blocked folder-drop decision for dragover and drop", async () => {
   const store = useWorkspaceStore();
@@ -369,7 +393,7 @@ it("uses the same blocked folder-drop decision for dragover and drop", async () 
   const folderId = store.data.folders.find(folder => folder.name === "Folder")!.id;
   store.tabs[root.id]!.draft.body = "unsaved";
   await drag("Root request", "Folder", 5);
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[root.id], folderId]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[root.id], { kind: "container", targetFolderId: folderId }]);
   await row("Root request").trigger("dragstart");
   store.tabs[root.id]!.saving = true;
   const beforeSavingFolderMove = JSON.stringify(store.data);
@@ -425,7 +449,7 @@ it("sends selected request IDs in tree display order rather than click order", a
   await row("Root request").trigger("dragstart");
   await row("Folder").trigger("drop");
   await flushPromises();
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], folder.id]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], { kind: "container", targetFolderId: folder.id }]);
 });
 it("keeps collapsed and search-hidden selections in a dirty Save All & Move request", async () => {
   const store = useWorkspaceStore();
@@ -438,12 +462,12 @@ it("keeps collapsed and search-hidden selections in a dirty Save All & Move requ
   await action("Folder", "Collapse");
   expect(row("Nested request")).toBeUndefined();
   await drag("Root request", "Folder", 5);
-  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], folder.id]);
+  expect(wrapper.emitted("moveRequests")?.[0]).toEqual([[nested.id, root.id], { kind: "container", targetFolderId: folder.id }]);
 
   await action("Folder", "Expand");
   await wrapper.get('button[aria-label="Search collections"]').trigger("click");
   await wrapper.get('input[aria-label="Search collections"]').setValue("Subfolder");
   expect(row("Root request")).toBeUndefined();
   await drag("Nested request", "Folder", 95);
-  expect(wrapper.emitted("moveRequests")?.[1]).toEqual([[nested.id, root.id], folder.id]);
+  expect(wrapper.emitted("moveRequests")?.[1]).toEqual([[nested.id, root.id], { kind: "container", targetFolderId: folder.id }]);
 });

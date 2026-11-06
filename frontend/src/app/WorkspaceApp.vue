@@ -23,7 +23,7 @@ import WorkspaceManager from "../features/WorkspaceManager.vue";
 import { useSettingsStore } from "../stores/settings";
 import { useViewport } from "../composables/useViewport";
 import type { BootstrapInfo, ShellAction } from "../types/shell";
-import { clone, type Parent, type TreeRef, type RequestDoc } from "../types/data";
+import { clone, type MoveDestination, type Parent, type TreeRef, type RequestDoc } from "../types/data";
 import TitleBar from "../components/layout/TitleBar.vue";
 import WorkspaceSidebar from "../components/layout/WorkspaceSidebar.vue";
 import WorkspaceOverview from "../components/layout/WorkspaceOverview.vue";
@@ -79,7 +79,7 @@ const sidebar = ref<InstanceType<typeof WorkspaceSidebar>>();
 const pendingClose = ref<string | null>(null);
 const deleting = ref<TreeRef | null>(null);
 const moving = ref<TreeRef | null>(null);
-const movingRequests = ref<{ ids: string[]; targetId: string | null; anchorId: string | null; insertAfter: boolean } | null>(null);
+const movingRequests = ref<{ ids: string[]; destination: MoveDestination } | null>(null);
 const destination = ref<string | null>(null);
 const reloading = ref<string | null>(null);
 const modalError = ref("");
@@ -333,22 +333,22 @@ function askMove(item: TreeRef) {
   destination.value = null;
   modalError.value = "";
 }
-async function askMoveRequests(ids: string[], targetId: string | null, anchorId: string | null = null, insertAfter = false) {
+async function askMoveRequests(ids: string[], destination: MoveDestination) {
   modalError.value = "";
   if (!ids.some(id => store.dirty(id))) {
-    try { await store.saveAndMoveRequests(ids, targetId, anchorId, insertAfter); }
+    try { await store.saveAndMoveRequests(ids, destination); }
     catch (e) { store.error = errorMessage(e); }
     return;
   }
-  movingRequests.value = { ids, targetId, anchorId, insertAfter };
+  movingRequests.value = { ids, destination };
 }
 const dirtyMovingRequests = computed(() => movingRequests.value?.ids.filter(id => store.dirty(id)) ?? []);
 async function saveAndMoveRequests() {
   if (!movingRequests.value || busy.value) return;
   busy.value = true; modalError.value = "";
   try {
-    await store.saveAndMoveRequests(movingRequests.value.ids, movingRequests.value.targetId, movingRequests.value.anchorId, movingRequests.value.insertAfter);
-    if (movingRequests.value.targetId) sidebar.value?.revealFolder(movingRequests.value.targetId);
+    await store.saveAndMoveRequests(movingRequests.value.ids, movingRequests.value.destination);
+    if (movingRequests.value.destination.targetFolderId) sidebar.value?.revealFolder(movingRequests.value.destination.targetFolderId);
     movingRequests.value = null;
   }
   catch (e) { modalError.value = errorMessage(e); }

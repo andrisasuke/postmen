@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useSettingsStore, clamp } from "../../stores/settings";
 import { errorMessage } from "../../services/data";
-import type { Parent, TreeRef, TreeKind } from "../../types/data";
+import type { MoveDestination, Parent, TreeRef, TreeKind } from "../../types/data";
 import type { MenuItem } from "../../types/shell";
 import AppIcon from "../ui/AppIcon.vue";
 import IconButton from "../ui/IconButton.vue";
@@ -14,7 +14,7 @@ const emit = defineEmits<{
   open: [id: string];
   remove: [item: TreeRef];
   move: [item: TreeRef];
-  moveRequests: [ids: string[], targetId: string | null, anchorId?: string | null, insertAfter?: boolean];
+  moveRequests: [ids: string[], destination: MoveDestination];
   about: [];
   import: [];
   export: [];
@@ -55,7 +55,7 @@ const dropTarget = ref<{ id: string; kind: TreeKind; zone: DropZone } | null>(nu
 type DropDecision =
   | { action: "none" }
   | { action: "blocked"; message: string }
-  | { action: "move-to-folder"; parentId: string | null; zone: "folder" | "outward" | "before" | "after"; anchorId?: string; insertAfter?: boolean }
+  | { action: "move-to-folder"; destination: MoveDestination; zone: "folder" | "outward" | "before" | "after" }
   | { action: "reorder"; zone: "before" | "after" };
 interface TreeRow extends TreeRef {
   name: string;
@@ -309,7 +309,7 @@ function canMoveToRequestParent(source: TreeRef, target: TreeRow) {
   const sourceRow = draggedRow();
   const selected = selectedRequestIds.value.map(id => all.value.find(row => row.id === id)).filter((row): row is TreeRow => !!row);
   const parentId = target.parentId;
-  return source.kind === "request" && target.kind === "request" && selected.length > 0 &&
+  return source.kind === "request" && source.id !== target.id && target.kind === "request" && selected.length > 0 &&
     sourceRow?.collectionId === target.collectionId &&
     selected.every(row => row.collectionId === target.collectionId) &&
     selected.some(row => row.parentId !== parentId);
@@ -356,12 +356,12 @@ function dropDecision(source: TreeRef | null, target: TreeRow, event: DragEvent)
     if (!canMoveToContainer(source, target)) return { action: "none" };
     const message = dragBlockMessage(source);
     const parentId = target.kind === "collection" ? null : target.id;
-    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId, zone: "folder" };
+    return message ? { action: "blocked", message } : { action: "move-to-folder", destination: { kind: "container", targetFolderId: parentId }, zone: "folder" };
   }
   if (source.kind === "request" && target.kind === "request" && canMoveToRequestParent(source, target)) {
     const message = dragBlockMessage(source);
     const zone = reorderZone(event);
-    return message ? { action: "blocked", message } : { action: "move-to-folder", parentId: target.parentId, zone, anchorId: target.id, insertAfter: zone === "after" };
+    return message ? { action: "blocked", message } : { action: "move-to-folder", destination: { kind: "request", targetFolderId: target.parentId, anchorId: target.id, insertAfter: zone === "after" }, zone };
   }
   if (!canReorder(source, target)) return { action: "none" };
   return { action: "reorder", zone: reorderZone(event) };
@@ -412,11 +412,10 @@ async function drop(event: DragEvent, target: TreeRow) {
     if (decision.action === "move-to-folder") {
       const ids = selectedInTreeOrder();
       if (ids.some(id => store.dirty(id))) {
-        if (decision.anchorId) emit("moveRequests", ids, decision.parentId, decision.anchorId, decision.insertAfter);
-        else emit("moveRequests", ids, decision.parentId);
+        emit("moveRequests", ids, decision.destination);
       }
       else {
-        await store.saveAndMoveRequests(ids, decision.parentId, decision.anchorId ?? null, decision.insertAfter);
+        await store.saveAndMoveRequests(ids, decision.destination);
         if (target.kind === "folder") setExpanded(target.id, true);
       }
       return;

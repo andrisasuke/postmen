@@ -495,7 +495,7 @@ describe("M2 workspace drafts and persistence", () => {
     const { a, b, parent } = await pair();
     const folder = await store.createFolder(parent, "Folder");
     store.tabs[a.id]!.draft.body = "saved with move";
-    await store.saveAndMoveRequests([b.id, a.id], folder.id);
+    await store.saveAndMoveRequests([b.id, a.id], { kind: "container", targetFolderId: folder.id });
     expect(store.data.requests.filter(request => request.folderId === folder.id).sort((x, y) => x.position - y.position).map(request => request.id)).toEqual([b.id, a.id]);
     expect(store.tabs[a.id]!.saved.body).toBe("saved with move");
     expect(store.dirty(a.id)).toBe(false);
@@ -508,7 +508,7 @@ describe("M2 workspace drafts and persistence", () => {
     const target = await store.createRequest({ ...parent, parentId: destination.id }, "Target");
     const later = await store.createRequest({ ...parent, parentId: destination.id }, "Later");
     store.tabs[a.id]!.draft.body = "save while inserting";
-    await store.saveAndMoveRequests([b.id, a.id], destination.id, target.id);
+    await store.saveAndMoveRequests([b.id, a.id], { kind: "request", targetFolderId: destination.id, anchorId: target.id, insertAfter: false });
     expect(store.siblings({ kind: "request", id: target.id })).toEqual([
       { kind: "request", id: earlier.id }, { kind: "folder", id: nested.id },
       { kind: "request", id: b.id }, { kind: "request", id: a.id },
@@ -522,7 +522,7 @@ describe("M2 workspace drafts and persistence", () => {
     store.tabs[a.id]!.draft.body = "keep me";
     const before = clone(store.data);
     vi.spyOn(api, "saveAndMoveRequests").mockRejectedValueOnce(new Error("disk unavailable"));
-    await expect(store.saveAndMoveRequests([a.id, b.id], folder.id)).rejects.toThrow("disk unavailable");
+    await expect(store.saveAndMoveRequests([a.id, b.id], { kind: "container", targetFolderId: folder.id })).rejects.toThrow("disk unavailable");
     expect(store.data).toEqual(before);
     expect(store.tabs[a.id]!.draft.body).toBe("keep me");
     expect(store.tabs[a.id]!.saving).toBe(false);
@@ -533,7 +533,7 @@ describe("M2 workspace drafts and persistence", () => {
     await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
     const originalPosition = store.data.requests.find(request => request.id === a.id)!.position;
     store.tabs[a.id]!.draft.body = "save in place";
-    await store.saveAndMoveRequests([b.id, a.id], folder.id);
+    await store.saveAndMoveRequests([b.id, a.id], { kind: "container", targetFolderId: folder.id });
     const moved = store.data.requests.filter(request => request.folderId === folder.id).sort((left, right) => left.position - right.position);
     expect(moved.map(request => request.id)).toEqual([a.id, b.id]);
     expect(moved[0]!.position).toBe(originalPosition);
@@ -544,7 +544,7 @@ describe("M2 workspace drafts and persistence", () => {
     const folder = await store.createFolder(parent, "Folder");
     await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
     const call = vi.spyOn(api, "saveAndMoveRequests");
-    await store.saveAndMoveRequests([a.id], folder.id);
+    await store.saveAndMoveRequests([a.id], { kind: "container", targetFolderId: folder.id });
     expect(call).not.toHaveBeenCalled();
   });
   it("atomically saves dirty requests while moving a mixed selection to collection root", async () => {
@@ -552,12 +552,12 @@ describe("M2 workspace drafts and persistence", () => {
     const folder = await store.createFolder(parent, "Folder");
     await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
     store.tabs[a.id]!.draft.body = "saved at root";
-    await store.saveAndMoveRequests([a.id, b.id], null);
+    await store.saveAndMoveRequests([a.id, b.id], { kind: "container", targetFolderId: null });
     const root = store.data.requests.filter(request => request.folderId === null).sort((left, right) => left.position - right.position);
     expect(root.map(request => request.id)).toEqual([b.id, a.id]);
     expect(store.tabs[a.id]!.saved.body).toBe("saved at root");
     const call = vi.spyOn(api, "saveAndMoveRequests");
-    await store.saveAndMoveRequests([a.id, b.id], null);
+    await store.saveAndMoveRequests([a.id, b.id], { kind: "container", targetFolderId: null });
     expect(call).not.toHaveBeenCalled();
   });
   it("deleting a selected environment clears selection, retaining request templates and draft bodies", async () => {
