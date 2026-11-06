@@ -56,6 +56,7 @@ type DropDecision =
   | { action: "none" }
   | { action: "blocked"; message: string }
   | { action: "move-to-folder"; destination: MoveDestination; zone: "folder" | "outward" | "before" | "after" }
+  | { action: "move-folder"; destination: MoveDestination; zone: "folder" | "outward" | "before" | "after" }
   | { action: "reorder"; zone: "before" | "after" };
 interface TreeRow extends TreeRef {
   name: string;
@@ -277,6 +278,7 @@ async function contextAction(action: string) {
 }
 function startDrag(event: DragEvent, row: TreeRow) {
   if (row.kind === "request" && !selectedRequestIds.value.includes(row.id)) selectedRequestIds.value = [row.id];
+  if (row.kind === "folder") selectedRequestIds.value = [];
   dragging.value = { kind: row.kind, id: row.id };
   event.dataTransfer?.setData("text/plain", row.id);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
@@ -313,6 +315,22 @@ function canMoveToRequestParent(source: TreeRef, target: TreeRow) {
     sourceRow?.collectionId === target.collectionId &&
     selected.every(row => row.collectionId === target.collectionId) &&
     selected.some(row => row.parentId !== parentId);
+}
+function folderTargetIsSelfOrDescendant(source: TreeRef, target: TreeRow) {
+  if (source.kind !== "folder") return false;
+  let cursor = target.kind === "folder" ? target.id : target.kind === "request" ? target.parentId : null;
+  while (cursor) {
+    if (cursor === source.id) return true;
+    cursor = all.value.find(row => row.kind === "folder" && row.id === cursor)?.parentId ?? null;
+  }
+  return false;
+}
+function canMoveFolder(source: TreeRef, target: TreeRow) {
+  const sourceRow = draggedRow();
+  if (source.kind !== "folder" || !sourceRow || sourceRow.collectionId !== target.collectionId) return false;
+  if (folderTargetIsSelfOrDescendant(source, target)) return false;
+  const parentId = target.kind === "collection" ? null : target.kind === "folder" ? target.id : target.parentId;
+  return target.kind === "request" || sourceRow.parentId !== parentId;
 }
 function selectedInTreeOrder() {
   const selected = new Set(selectedRequestIds.value);
@@ -362,6 +380,14 @@ function dropDecision(source: TreeRef | null, target: TreeRow, event: DragEvent)
     const message = dragBlockMessage(source);
     const zone = reorderZone(event);
     return message ? { action: "blocked", message } : { action: "move-to-folder", destination: { kind: "request", targetFolderId: target.parentId, anchorId: target.id, insertAfter: zone === "after" }, zone };
+  }
+  if (source.kind === "folder" && canMoveFolder(source, target)) {
+    const parentId = target.kind === "collection" ? null : target.kind === "folder" ? target.id : target.parentId;
+    if (target.kind === "request") {
+      const zone = reorderZone(event);
+      return { action: "move-folder", destination: { kind: "request", targetFolderId: parentId, anchorId: target.id, insertAfter: zone === "after" }, zone };
+    }
+    return { action: "move-folder", destination: { kind: "container", targetFolderId: parentId }, zone: target.kind === "folder" ? "folder" : "outward" };
   }
   if (!canReorder(source, target)) return { action: "none" };
   return { action: "reorder", zone: reorderZone(event) };
@@ -418,6 +444,16 @@ async function drop(event: DragEvent, target: TreeRow) {
         await store.saveAndMoveRequests(ids, decision.destination);
         if (target.kind === "folder") setExpanded(target.id, true);
       }
+      return;
+    }
+    if (decision.action === "move-folder") {
+      await store.moveFolder({
+        id: source.id,
+        targetFolderId: decision.destination.targetFolderId,
+        anchorId: decision.destination.kind === "request" ? decision.destination.anchorId : null,
+        insertAfter: decision.destination.kind === "request" && decision.destination.insertAfter,
+      });
+      if (target.kind === "folder") setExpanded(target.id, true);
       return;
     }
     const items = store.siblings(target);

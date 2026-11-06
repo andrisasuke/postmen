@@ -7,6 +7,7 @@ import type {
   EnvironmentInput,
   NewRequestContent,
   MoveDestination,
+  MoveFolderInput,
   Parent,
   RequestDoc,
   RequestSummary,
@@ -731,6 +732,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
+  async function moveFolder(input: MoveFolderInput) {
+    const folder = data.value.folders.find(value => value.id === input.id);
+    if (!folder) throw new DataError("NOT_FOUND", "This folder no longer exists.");
+    const target = input.targetFolderId === null ? null : data.value.folders.find(value => value.id === input.targetFolderId);
+    if (input.targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    if (target && target.collectionId !== folder.collectionId)
+      throw new DataError("INVALID_INPUT", "Folders cannot move between collections.");
+    const result = await backend().moveFolder(input);
+    data.value.folders = data.value.folders.map(value => value.id === input.id ? result.folder : value);
+    for (const [position, item] of result.items.entries()) {
+      const node = item.kind === "folder" ? data.value.folders.find(value => value.id === item.id) : data.value.requests.find(value => value.id === item.id);
+      if (node) node.position = position;
+    }
+  }
   async function saveAndMoveRequests(ids: string[], destination: MoveDestination) {
     const targetFolderId = destination.targetFolderId;
     const anchorId = destination.kind === "request" ? destination.anchorId : null;
@@ -860,6 +875,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     moveSibling,
     reorderSiblings: notifyMutation(reorderSiblings, (item, items) => ({ success: unchangedOrder(item, items) ? null : "Order updated successfully", error: "Failed to update order" })),
     moveToFolder: notifyMutation(moveToFolder, (item, parentId) => ({ success: unchangedParent(item, parentId) ? null : `${item.kind === "folder" ? "Folder" : "Request"} moved successfully`, error: `Failed to move ${item.kind}` })),
+    moveFolder: notifyMutation(moveFolder, () => ({ success: "Folder moved successfully", error: "Failed to move folder" })),
     saveAndMoveRequests,
     environmentBusy,
     transitioning,

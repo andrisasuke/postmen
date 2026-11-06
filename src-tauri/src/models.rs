@@ -177,6 +177,22 @@ pub struct UpdateFolder {
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveFolder {
+    pub id: String,
+    pub target_folder_id: Option<String>,
+    #[serde(default)]
+    pub anchor_id: Option<String>,
+    #[serde(default)]
+    pub insert_after: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveFolderResult {
+    pub folder: Folder,
+    pub items: Vec<TreeRef>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateRequest {
     pub collection_id: String,
     pub folder_id: Option<String>,

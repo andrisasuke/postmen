@@ -256,6 +256,97 @@ pub fn update_folder(conn: &mut Connection, input: UpdateFolder) -> AppResult<Fo
     tx.commit()?;
     Ok(result)
 }
+pub fn move_folder(conn: &mut Connection, input: MoveFolder) -> AppResult<MoveFolderResult> {
+    validation::id(&input.id)?;
+    let tx = conn.transaction()?;
+    let old = tx.query_row(
+        "SELECT id,collection_id,parent_id,name,position FROM folders WHERE id=?1",
+        [&input.id],
+        folder_row,
+    )?;
+    require_parent(&tx, &old.collection_id, input.target_folder_id.as_deref())?;
+    if let Some(anchor_id) = &input.anchor_id {
+        validation::id(anchor_id)?;
+        let anchor_exists = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE id=?1 AND collection_id=?2 AND folder_id IS ?3)",
+            params![anchor_id, old.collection_id, input.target_folder_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !anchor_exists {
+            return Err(AppError::invalid(
+                "The request you dropped beside is no longer in the destination folder.",
+            ));
+        }
+    }
+    let mut destination = Vec::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT 'folder', id, position FROM folders WHERE collection_id=?1 AND parent_id IS ?2 UNION ALL SELECT 'request', id, position FROM requests WHERE collection_id=?1 AND folder_id IS ?2 ORDER BY 3, 2",
+        )?;
+        let rows = statement
+            .query_map(params![old.collection_id, input.target_folder_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+        for row in rows {
+            let (kind, id) = row?;
+            if kind != "folder" || id != old.id {
+                destination.push(TreeRef { kind, id });
+            }
+        }
+    }
+    let insertion = if let Some(anchor_id) = &input.anchor_id {
+        destination
+            .iter()
+            .position(|item| item.kind == "request" && item.id == *anchor_id)
+            .ok_or_else(|| {
+                AppError::invalid(
+                    "The request you dropped beside is no longer in the destination folder.",
+                )
+            })?
+            + usize::from(input.insert_after)
+    } else {
+        destination.len()
+    };
+    destination.insert(
+        insertion,
+        TreeRef {
+            kind: "folder".into(),
+            id: old.id.clone(),
+        },
+    );
+    // The schema trigger rejects self/descendant moves; this transaction then rolls back intact.
+    tx.execute(
+        "UPDATE folders SET parent_id=?1 WHERE id=?2",
+        params![input.target_folder_id, old.id],
+    )?;
+    for (position, item) in destination.iter().enumerate() {
+        match item.kind.as_str() {
+            "folder" => {
+                tx.execute(
+                    "UPDATE folders SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            "request" => {
+                tx.execute(
+                    "UPDATE requests SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            _ => return Err(AppError::invalid("Invalid destination item.")),
+        };
+    }
+    let folder = tx.query_row(
+        "SELECT id,collection_id,parent_id,name,position FROM folders WHERE id=?1",
+        [&old.id],
+        folder_row,
+    )?;
+    tx.commit()?;
+    Ok(MoveFolderResult {
+        folder,
+        items: destination,
+    })
+}
 pub fn create_request(conn: &mut Connection, input: CreateRequest) -> AppResult<RequestDoc> {
     let tx = conn.transaction()?;
     require_parent(&tx, &input.collection_id, input.folder_id.as_deref())?;

@@ -867,6 +867,131 @@ fn folder_relationships_cycle_and_cross_collection_are_rejected() {
     .unwrap();
 }
 #[test]
+fn move_folder_orders_with_request_anchor_and_persists_safely() {
+    let (_dir, db) = fixture();
+    let (collection_id, source_id, target_id, anchor_id, other_collection_id) = db
+        .run(|c| {
+            let collection = collection(c);
+            let other = repo::create_collection(
+                c,
+                CreateCollection {
+                    name: "Other API".into(),
+                },
+            )?;
+            let parent = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: None,
+                    name: "Parent".into(),
+                },
+            )?;
+            let source = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: Some(parent.id),
+                    name: "Source".into(),
+                },
+            )?;
+            let target = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: None,
+                    name: "Target".into(),
+                },
+            )?;
+            let earlier = request(c, &collection.id, Some(target.id.clone()));
+            let anchor = request(c, &collection.id, Some(target.id.clone()));
+            let later = request(c, &collection.id, Some(target.id.clone()));
+            let moved = repo::move_folder(
+                c,
+                MoveFolder {
+                    id: source.id.clone(),
+                    target_folder_id: Some(target.id.clone()),
+                    anchor_id: Some(anchor.id.clone()),
+                    insert_after: false,
+                },
+            )?;
+            assert_eq!(moved.folder.parent_id, Some(target.id.clone()));
+            assert_eq!(
+                moved.items,
+                vec![
+                    TreeRef {
+                        kind: "request".into(),
+                        id: earlier.id
+                    },
+                    TreeRef {
+                        kind: "folder".into(),
+                        id: source.id.clone()
+                    },
+                    TreeRef {
+                        kind: "request".into(),
+                        id: anchor.id.clone()
+                    },
+                    TreeRef {
+                        kind: "request".into(),
+                        id: later.id
+                    },
+                ]
+            );
+            Ok((collection.id, source.id, target.id, anchor.id, other.id))
+        })
+        .unwrap();
+    db.run(|c| {
+        let workspace = repo::workspace(c)?;
+        assert_eq!(
+            workspace
+                .folders
+                .iter()
+                .find(|folder| folder.id == source_id)
+                .unwrap()
+                .parent_id,
+            Some(target_id.clone())
+        );
+        assert!(repo::move_folder(
+            c,
+            MoveFolder {
+                id: target_id.clone(),
+                target_folder_id: Some(source_id.clone()),
+                anchor_id: None,
+                insert_after: false,
+            }
+        )
+        .is_err());
+        let other_target = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: other_collection_id,
+                parent_id: None,
+                name: "Other".into(),
+            },
+        )?;
+        assert!(repo::move_folder(
+            c,
+            MoveFolder {
+                id: source_id.clone(),
+                target_folder_id: Some(other_target.id),
+                anchor_id: Some(anchor_id),
+                insert_after: false,
+            }
+        )
+        .is_err());
+        assert_eq!(
+            repo::workspace(c)?
+                .folders
+                .iter()
+                .find(|folder| folder.id == source_id)
+                .unwrap()
+                .collection_id,
+            collection_id
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
 fn request_roundtrip_preserves_duplicates_unicode_and_all_body_fields() {
     let (dir, db) = fixture();
     let id = db

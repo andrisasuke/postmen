@@ -236,6 +236,44 @@ it("moves a request into a nested folder, appending after its existing child", a
   ]);
   expect(row("Subfolder").attributes("aria-expanded")).toBe("true");
 });
+it("moves one folder into containers and beside requests without touching dirty request drafts", async () => {
+  const store = useWorkspaceStore();
+  const source = store.data.folders.find(folder => folder.name === "Subfolder")!;
+  const nested = store.data.requests.find(request => request.name === "Nested request")!;
+  const collectionId = source.collectionId;
+  const destination = await store.createFolder({ collectionId, parentId: null }, "Destination");
+  const target = await store.createRequest({ collectionId, parentId: destination.id }, "Destination request");
+  store.tabs[nested.id]!.draft.body = "keep this dirty draft";
+  await row("Root request").trigger("click", { metaKey: true });
+
+  await drag("Subfolder", "Destination");
+  expect(store.data.folders.find(folder => folder.id === source.id)?.parentId).toBe(destination.id);
+  expect(store.tabs[nested.id]!.draft.body).toBe("keep this dirty draft");
+  expect(wrapper.emitted("moveRequests")).toBeUndefined();
+  expect(store.data.requests.find(request => request.name === "Root request")?.folderId).toBeNull();
+
+  await drag("Subfolder", "Destination request", 5);
+  expect(store.siblings({ kind: "request", id: target.id })).toEqual([
+    { kind: "folder", id: source.id }, { kind: "request", id: target.id },
+  ]);
+  await drag("Subfolder", "Collection");
+  expect(store.data.folders.find(folder => folder.id === source.id)?.parentId).toBeNull();
+  expect(store.tabs[nested.id]!.draft.body).toBe("keep this dirty draft");
+});
+it("rejects folder drops into itself, descendants, and other collections", async () => {
+  const store = useWorkspaceStore();
+  const other = await store.createCollection("Other collection");
+  await store.createFolder({ collectionId: other.id, parentId: null }, "Other folder");
+  await flushPromises();
+  const before = JSON.stringify(store.data);
+  for (const target of ["Folder", "Subfolder", "Other folder"]) {
+    await row("Folder").trigger("dragstart");
+    await row(target).trigger("dragover");
+    expect(row(target).classes()).not.toContain("folder-drop-target");
+    await row(target).trigger("drop");
+  }
+  expect(JSON.stringify(store.data)).toBe(before);
+});
 it("reorders siblings from the top and bottom drop zones", async () => {
   const store = useWorkspaceStore();
   const rootRequestId = store.data.requests.find(request => request.name === "Root request")!.id;

@@ -198,6 +198,39 @@ export function createMemoryApi(persist = false): DataApi {
       save();
       return clone(f);
     },
+    async moveFolder(input) {
+      const folder = data.folders.find((value) => value.id === input.id);
+      if (!folder) throw new DataError("NOT_FOUND", "Folder not found.");
+      parent(folder.collectionId, input.targetFolderId);
+      let cursor = input.targetFolderId;
+      while (cursor) {
+        if (cursor === folder.id)
+          throw new DataError("INVALID_INPUT", "A folder cannot be moved into itself or a descendant.");
+        cursor = data.folders.find((value) => value.id === cursor)?.parentId ?? null;
+      }
+      const items = [
+        ...data.folders
+          .filter((value) => value.collectionId === folder.collectionId && value.parentId === input.targetFolderId && value.id !== folder.id)
+          .map((value) => ({ kind: "folder" as const, id: value.id, position: value.position })),
+        ...Object.values(requests)
+          .filter((value) => value.collectionId === folder.collectionId && value.folderId === input.targetFolderId)
+          .map((value) => ({ kind: "request" as const, id: value.id, position: value.position })),
+      ].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+      let insertion = items.length;
+      if (input.anchorId) {
+        const index = items.findIndex((item) => item.kind === "request" && item.id === input.anchorId);
+        if (index < 0) throw new DataError("INVALID_INPUT", "The request you dropped beside is no longer in the destination folder.");
+        insertion = index + Number(!!input.insertAfter);
+      }
+      folder.parentId = input.targetFolderId;
+      items.splice(insertion, 0, { kind: "folder", id: folder.id, position: 0 });
+      for (const [position, item] of items.entries()) {
+        const target = item.kind === "folder" ? data.folders.find((value) => value.id === item.id) : requests[item.id];
+        if (target) target.position = position;
+      }
+      save();
+      return { folder: clone(folder), items: items.map(({ kind, id }) => ({ kind, id })) };
+    },
     async deleteFolder(id) {
       remove({ kind: "folder", id });
     },

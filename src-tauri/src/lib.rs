@@ -279,6 +279,7 @@ pub fn run() {
             commands::delete_collection,
             commands::create_folder,
             commands::update_folder,
+            commands::move_folder,
             commands::delete_folder,
             commands::create_request,
             commands::get_request,
