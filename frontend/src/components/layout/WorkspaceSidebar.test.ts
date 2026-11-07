@@ -102,6 +102,29 @@ it("switches expandable collection and folder rows between open and closed fille
     expect(row(name).get(".app-icon").classes()).toContain("tabler-icon-folder-open-filled");
   }
 });
+it("renders compact accessible HTTP method badges without changing request methods", async () => {
+  const store = useWorkspaceStore();
+  const collectionId = store.data.collections[0]!.id;
+  const cases = [
+    ["GET", "GET"], ["POST", "POST"], ["PUT", "PUT"], ["PATCH", "PAT"],
+    ["DELETE", "DEL"], ["HEAD", "HEAD"], ["OPTIONS", "OPT"],
+  ] as const;
+  for (const [method] of cases) {
+    const request = await store.createRequest({ collectionId, parentId: null }, `${method} request`);
+    const summary = store.data.requests.find(item => item.id === request.id)!;
+    summary.method = method;
+    store.tabs[request.id]!.saved.method = method;
+    store.tabs[request.id]!.draft.method = method;
+  }
+  await flushPromises();
+  for (const [method, label] of cases) {
+    const badge = row(`${method} request`).get(".method-label");
+    expect(badge.text()).toBe(label);
+    expect(badge.attributes("title")).toBe(`${method} request`);
+    expect(badge.attributes("aria-label")).toBe(`HTTP ${method} method`);
+    expect(store.data.requests.find(item => item.name === `${method} request`)?.method).toBe(method);
+  }
+});
 it("keeps child expansion state when collapsing and reopening its parent", async () => {
   await action("Subfolder", "Collapse");
   await action("Collection", "Collapse");

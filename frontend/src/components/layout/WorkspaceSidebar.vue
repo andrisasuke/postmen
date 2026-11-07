@@ -27,6 +27,14 @@ const store = useWorkspaceStore();
 const settings = useSettingsStore();
 const search = ref("");
 const showSearch = ref(false);
+const methodBadgeLabel: Record<string, string> = {
+  DELETE: "DEL",
+  PATCH: "PAT",
+  OPTIONS: "OPT",
+};
+function badgeLabel(method?: string) {
+  return methodBadgeLabel[method ?? ""] ?? method;
+}
 const expanded = computed(() => settings.preferences.treeExpanded);
 const searchExpanded = ref<Record<string, boolean>>({});
 const searchQuery = computed(() => search.value.trim().toLowerCase());
@@ -646,7 +654,9 @@ onBeforeUnmount(stop);
             v-if="row.kind === 'request'"
             class="method-label"
             :class="`method-${row.method?.toLowerCase()}`"
-            >{{ row.method }}</span
+            :title="`${row.method} request`"
+            :aria-label="`HTTP ${row.method} method`"
+            >{{ badgeLabel(row.method) }}</span
           ><AppIcon
             v-else
             :name="isExpanded(row.id) ? 'folderOpenFilled' : 'folderFilled'"
