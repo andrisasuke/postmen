@@ -135,6 +135,29 @@ export interface ReorderInput {
   parentId: string | null;
   items: TreeRef[];
 }
+export type MoveDestination =
+  | { kind: "container"; targetFolderId: string | null }
+  | { kind: "request"; targetFolderId: string | null; anchorId: string; insertAfter: boolean };
+export interface SaveAndMoveRequestsInput {
+  targetFolderId: string | null;
+  anchorId?: string | null;
+  insertAfter?: boolean;
+  requests: Array<{ id: string; revision: number; draft: RequestDoc | null }>;
+}
+export interface SaveAndMoveRequestsResult {
+  requests: RequestDoc[];
+  items: TreeRef[];
+}
+export interface MoveFolderInput {
+  id: string;
+  targetFolderId: string | null;
+  anchorId?: string | null;
+  insertAfter?: boolean;
+}
+export interface MoveFolderResult {
+  folder: Folder;
+  items: TreeRef[];
+}
 export interface EnvironmentInput {
   id: string | null;
   collectionId: string | null;
@@ -153,6 +176,7 @@ export interface DataApi {
     parentId: string | null;
     name: string;
   }): Promise<Folder>;
+  moveFolder(input: MoveFolderInput): Promise<MoveFolderResult>;
   deleteFolder(id: string): Promise<void>;
   createRequest(input: {
     collectionId: string;
@@ -162,6 +186,7 @@ export interface DataApi {
   }): Promise<RequestDoc>;
   getRequest(id: string): Promise<RequestDoc>;
   saveRequest(input: RequestDoc): Promise<RequestDoc>;
+  saveAndMoveRequests(input: SaveAndMoveRequestsInput): Promise<SaveAndMoveRequestsResult>;
   deleteRequest(id: string): Promise<void>;
   reorderItems(input: ReorderInput): Promise<void>;
   saveEnvironment(input: EnvironmentInput): Promise<Environment>;

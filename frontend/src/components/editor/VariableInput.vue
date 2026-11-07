@@ -166,17 +166,18 @@ function change(event: Event) {
   value.value = (event.target as HTMLInputElement).value;
   sync(true);
 }
-async function choose(index: number) {
+function choose(index: number) {
   const v = suggestions.value[index];
   const current = completion.value;
   if (!v || !current) return;
   const replacement = current.variable ? `<<${v.name}>>` : v.name;
   value.value = value.value.slice(0,current.start) + replacement + value.value.slice(current.end);
   dismissed.value = true;
-  await nextTick();
-  input.value?.focus();
-  input.value?.setSelectionRange(current.start + replacement.length, current.start + replacement.length);
-  sync();
+  void nextTick(() => {
+    input.value?.setSelectionRange(current.start + replacement.length, current.start + replacement.length);
+    cursor.value = current.start + replacement.length;
+    scroll.value = input.value?.scrollLeft ?? 0;
+  });
 }
 function keydown(event: KeyboardEvent) {
   hideTooltip();

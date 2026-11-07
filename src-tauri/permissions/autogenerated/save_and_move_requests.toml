@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-and-move-requests"
+description = "Enables the save_and_move_requests command without any pre-configured scope."
+commands.allow = ["save_and_move_requests"]
+
+[[permission]]
+identifier = "deny-save-and-move-requests"
+description = "Denies the save_and_move_requests command without any pre-configured scope."
+commands.deny = ["save_and_move_requests"]

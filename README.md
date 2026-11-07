@@ -10,80 +10,43 @@
 
 ## Features
 
-- **Workspaces:** independent collections, environments, saved tabs and history; create, switch, set a default and manage workspaces without hiding the sidebar.
-- **Collections & requests:** nested folders, search, persistent expand/collapse, reorder, rename, clone and delete. Create HTTP requests manually or import from cURL.
-- **Request editor:** synchronized URL/query parameters, header autocomplete, JSON/raw text and multipart bodies, file attachments, independent drafts, undo history and a Save icon that highlights unsaved changes.
-- **Generate cURL:** preview and copy the current draft as a POSIX shell command, with active environment values and local multipart file paths.
-- **Environments:** select Collection and Global environments together; use `<<variable>>` in URLs, parameters and headers with autocomplete and value tooltips.
-- **Send & inspect:** native Rust HTTP, cancellation, verified TLS, response status/timing/headers, formatted or raw read-only previews and execution metadata history.
-- **Desktop experience:** light/dark/system themes, cyan accent `#8BE2FA`, resizable split panes, keyboard shortcuts, saved window geometry, notifications and unsaved-change Quit confirmation.
-- **Postman compatibility:** import Collection v2.0/v2.1 JSON through file picker or drag-and-drop; export selected collections to v2.1 JSON with overwrite confirmation.
+- Organize requests in independent workspaces, collections and nested folders. Search, reorder, clone, and move requests; select several with Cmd on macOS or Ctrl on Windows/Linux, then drag them into a folder.
+- Edit URLs, query parameters, headers, JSON/raw or multipart bodies, and local file attachments. Each open request keeps its own draft and undo history.
+- Use Collection and Global environments with `<<variable>>` placeholders in URLs, parameters and headers. Collection values override Global values.
+- Send requests through native Rust HTTP and inspect response status, timing, headers and body. Cancel requests and review execution history.
+- Import Postman Collection v2.0/v2.1 JSON, export v2.1 JSON, create requests from cURL, and generate cURL from a draft.
+- Choose light, dark or system theme; use keyboard shortcuts and saved window layout. Quit warns about unsaved drafts.
 
 ## Development
 
-For macOS development, use **macOS 14+**, Xcode Command Line Tools, Rust/Cargo and npm. The working Rust toolchain is 1.92.0. Node must match `package.json`: `>=22.22.2 <23 || >=24.15.0`. Windows/Linux builds are not yet verified.
+On macOS, install Xcode Command Line Tools, Rust/Cargo and npm. macOS 14+ and Rust 1.92.0 are the tested setup. Node must satisfy `>=22.22.2 <23 || >=24.15.0` from `package.json`. Windows/Linux builds have not been verified.
 
 ```sh
 npm ci
 npm run tauri:dev
 ```
 
-Tauri starts Vite at `127.0.0.1:1420`; do not start a second Vite instance on that port. `npm run dev` alone provides a browser preview, not native storage or HTTP. Fully restart native dev after Rust, command, icon or configuration changes.
+Tauri starts Vite at `127.0.0.1:1420`. `npm run dev` provides a browser preview without native storage or HTTP. Restart native dev after Rust, command or configuration changes.
 
-### Build & checks
+### Build and checks
 
 ```sh
-npm run build                         # Typecheck and build the frontend
+npm run build                         # Frontend typecheck and build
 npm run lint
-cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+npm test
+npm run test:rust
 npm run tauri:build -- --bundles app   # macOS application bundle
 ```
 
-Output: `src-tauri/target/release/bundle/macos/Postmen.app`. Local builds are not signed/notarized for distribution. Rebuild and replace an installed app to update it. Use a separate Cargo target directory when preserving an older build.
+The app bundle is `src-tauri/target/release/bundle/macos/Postmen.app`. Local bundles are not notarized for distribution. Browser end-to-end tests use `npm run test:e2e` and require Playwright browsers.
 
-Tests are available via `npm test`, `npm run test:rust` and `npm run test:e2e` (requires Playwright browsers). These commands describe available checks, not a claim that they have all passed. Broader visual and cross-monitor validation remains open.
+## Using PostMen
 
-## Usage
-
-### Workspaces
-
-Choose **Create workspace** from the title-bar dropdown. Edit the preselected name, then confirm with **✓ / Enter** or cancel with **× / Escape**. **Manage workspaces** offers icon-only Open, Set Default and Delete actions, plus Create Workspace at the top right.
-
-The default workspace opens at startup and cannot be deleted. Changing the default does not switch the current session. Save/discard drafts and finish pending operations before switching. Saved tabs are restored per workspace.
-
-**Workspace deletion is recoverable, not permanent erasure:** after confirmation, the entry disappears from the app but its database files remain on disk. Deleting the active workspace opens the default. There is no in-app Restore button; recovery requires a catalog repair with the app closed. Back up the catalog first. Workspace rename and moving collections between workspaces are not supported yet.
-
-### Variables
-
-```text
-URL:      <<api_url>>/users
-Header:   Authorization: Bearer <<token>>
-```
-
-Collection variables belong only to that collection. Global variables are shared by collections **within the same workspace**. Both environments can be selected independently; Collection values override Global values with the same name. Hover over a placeholder to inspect its resolved value. Body/multipart variable substitution is not supported.
-
-### Generate cURL
-
-In the desktop app, click the **`</>` icon immediately left of Save** to open **Generate Code**. The read-only preview includes unsaved edits from the moment the dialog opens. Click **Copy cURL** to copy the command; a green check appears for two seconds on success. If clipboard access fails, select the code and use **Cmd/Ctrl+C**. Close with **X**, a click outside the dialog, or **Escape**. Generating or copying code does not save or send the request, or add execution history.
-
-Commands target POSIX shells such as zsh and bash. They include the method, URL, enabled query parameters and headers, and JSON/raw or multipart body. URL/query/header variables use the selected environments; body and multipart values stay literal. JSON/raw body formatting is preserved. Multipart files use their original local paths, which must exist where you run the command.
-
-Generated code includes resolved authentication values and local file paths; review it before sharing. PostMen's timeout and redirect settings are not exported. Invalid URLs/headers, unresolved variables, unavailable files and unsupported representations show an error in the dialog. HEAD with an active body and empty multipart forms are not supported.
-
-### Save status
-
-The Save icon uses the theme's blue/cyan accent when the request has unsaved data changes. It turns gray while saving and stays gray once all changes are saved. If saving fails or newer edits remain after a save, it turns blue again. Undoing changes back to the saved values or discarding the draft also restores gray. This applies to the Save button and **Cmd/Ctrl+S**; changing editor tabs, scrolling or layout does not mark the request as changed.
-
-### Import & export
-
-Use the sidebar **down-arrow** to import and **up-arrow** to export.
-
-- **Import:** preview the collection and validation warnings before saving. Name conflicts offer explicit overwrite or a new collection with an incrementing `_1` suffix. Postman `{{variables}}` become `<<variables>>`. Raw text/NDJSON is retained; complete `/* … */` comments outside strings are stripped. Blank query rows are skipped; meaningful invalid rows report their request/folder location.
-- **Export:** select collections, optionally include selected environment variables, set file names and choose a destination. Each collection produces one JSON file. Existing files require **Yes, overwrite**; successful files remain if part of a batch fails.
-
-Scripts, authentication helpers, response examples and attachment contents are not transferred. Re-select multipart files after import/export and review `Content-Type` for non-JSON bodies. Collection overwrite and confirmed file replacement have no automatic undo. Exported variables may contain credentials.
-
-### Shortcuts
+- Create or switch workspaces from the title-bar dropdown. The default workspace opens at startup; saved tabs are restored per workspace.
+- Use Cmd/Ctrl-click to select multiple requests in one collection, then drag a selected request onto a folder. If any selected request has unsaved changes, choose **Save All & Move** or **Cancel**.
+- Enter `<<name>>` in a URL, query parameter or header to use an environment variable. Body and multipart values are not substituted.
+- Use the sidebar arrows to import or export collections. Import previews validation warnings; export asks before overwriting files.
+- Click the `</>` icon beside Save to preview and copy cURL for the current draft. Review resolved credentials and local file paths before sharing it.
 
 | Action | Shortcut |
 | --- | --- |
@@ -94,42 +57,21 @@ Scripts, authentication helpers, response examples and attachment contents are n
 | Toggle sidebar | `Cmd/Ctrl + B` |
 | Toggle response layout | `Cmd/Ctrl + Shift + L` |
 
-## Storage & safety
+## Data and safety
 
-Development and production have separate SQLite data, window state and WebView preferences. Their macOS application-data roots are:
+Development and production keep separate SQLite data and window state on macOS:
 
 ```text
 Production:  ~/Library/Application Support/com.postmen.desktop/
 Development: ~/Library/Application Support/com.postmen.desktop.dev/
 ```
 
-Within each profile:
+The profile contains `postmen.sqlite3` for the initial workspace, `workspaces/<UUID>/postmen.sqlite3` for additional workspaces, and `workspaces.v1.json` for the catalog. Back up the entire profile with the app closed, including SQLite sidecar files.
 
-```text
-postmen.sqlite3                    Initial My Workspace data
-workspaces/<UUID>/postmen.sqlite3  Additional workspace data
-workspaces.v1.json                 Catalog, default and removed entries
-```
+Data is stored locally as **plaintext**, not in an encrypted vault. Unsaved drafts, undo history and response bodies exist only in memory and may be lost after a crash or force-quit. Workspace deletion removes the entry from the app but retains its database files for manual recovery; there is no in-app Restore action. Legacy application databases are not migrated.
 
-Existing data stays in My Workspace; creating workspaces does not move or copy it. Legacy application databases/users are not migrated. A fresh window starts maximized, not fullscreen; later launches restore the saved size and position.
+## Repository and license
 
-Data is stored locally in **plaintext**, not an encrypted secret vault. Unsaved drafts, undo history and response bodies are memory-only and can be lost on a crash or force-quit. Use the normal Quit flow to save/discard changes. Back up the entire profile with the app closed, including its catalog and SQLite sidecar files.
-
-Limits: 100 active workspaces; 2 MiB saved bodies; 1 MiB decompressed response previews; 100 MiB total file uploads. HTTP defaults to a 30-second timeout, with TLS verification enabled. Cross-origin redirects stop at 3xx; automatic proxy configuration, custom CAs and disabling TLS verification are unavailable. HTTP is supported; GraphQL, gRPC and WebSocket modes are not.
-
-## Repository
-
-```text
-frontend/src/     Vue UI, Pinia stores, typed IPC and editor services
-src-tauri/        Rust backend, SQLite, native integration and app icons
-tests/e2e/        Browser regression tests
-scripts/          Build verification and opt-in QA tooling
-assets/readme/    Application screenshot
-licenses/         Dependency license texts
-```
-
-Detailed plans and historical QA reports live in a private Obsidian archive, exposed locally through the ignored `docs` symlink. They are not required to build the app. Development fixtures are excluded from production and must not receive real credentials.
-
-## License
+`frontend/src/` contains the Vue UI, Pinia stores and typed IPC. `src-tauri/` contains the Rust backend, SQLite and native integration. `tests/e2e/` contains browser regression tests.
 
 MIT — see [LICENSE](LICENSE). Asset and dependency attribution is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). PostMen is an independent project and is not affiliated with Postman.

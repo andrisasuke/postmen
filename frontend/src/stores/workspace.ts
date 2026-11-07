@@ -6,6 +6,8 @@ import type {
   DataApi,
   EnvironmentInput,
   NewRequestContent,
+  MoveDestination,
+  MoveFolderInput,
   Parent,
   RequestDoc,
   RequestSummary,
@@ -730,6 +732,63 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       await changeMetadata(item.id, { folderId: parentId });
     }
   }
+  async function moveFolder(input: MoveFolderInput) {
+    const folder = data.value.folders.find(value => value.id === input.id);
+    if (!folder) throw new DataError("NOT_FOUND", "This folder no longer exists.");
+    const target = input.targetFolderId === null ? null : data.value.folders.find(value => value.id === input.targetFolderId);
+    if (input.targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    if (target && target.collectionId !== folder.collectionId)
+      throw new DataError("INVALID_INPUT", "Folders cannot move between collections.");
+    const result = await backend().moveFolder(input);
+    data.value.folders = data.value.folders.map(value => value.id === input.id ? result.folder : value);
+    for (const [position, item] of result.items.entries()) {
+      const node = item.kind === "folder" ? data.value.folders.find(value => value.id === item.id) : data.value.requests.find(value => value.id === item.id);
+      if (node) node.position = position;
+    }
+  }
+  async function saveAndMoveRequests(ids: string[], destination: MoveDestination) {
+    const targetFolderId = destination.targetFolderId;
+    const anchorId = destination.kind === "request" ? destination.anchorId : null;
+    const insertAfter = destination.kind === "request" && destination.insertAfter;
+    const unique = [...new Set(ids)];
+    if (!unique.length) throw new DataError("INVALID_INPUT", "Choose requests to move.");
+    const summaries = unique.map(id => data.value.requests.find(request => request.id === id));
+    const collectionId = summaries[0]?.collectionId;
+    if (!collectionId || summaries.some(request => !request || request.collectionId !== collectionId))
+      throw new DataError("INVALID_INPUT", "Select requests from one collection.");
+    const target = targetFolderId === null ? null : data.value.folders.find(folder => folder.id === targetFolderId);
+    if (targetFolderId !== null && !target) throw new DataError("NOT_FOUND", "The destination folder no longer exists.");
+    if (target && target.collectionId !== collectionId)
+      throw new DataError("INVALID_INPUT", "Select requests and a folder in the same collection.");
+    if (summaries.every(request => request?.folderId === targetFolderId) && !unique.some(id => dirty(id)) && !anchorId) return;
+    if (unique.some(id => tabs[id]?.saving)) throw new DataError("BUSY", "Wait for selected request saves to finish.");
+    const locked = unique.flatMap(id => tabs[id] ? [tabs[id]!] : []);
+    for (const tab of locked) tab.saving = true;
+    const submitted = unique.map(id => {
+      const tab = tabs[id]; const request = data.value.requests.find(value => value.id === id)!;
+      return { id, revision: tab?.saved.revision ?? request.revision, draft: tab && dirty(id) ? clone(tab.draft) : null };
+    });
+    try {
+      const result = await backend().saveAndMoveRequests({ targetFolderId, anchorId, insertAfter, requests: submitted });
+      for (const [position, item] of result.items.entries()) {
+        const node = item.kind === "folder" ? data.value.folders.find(value => value.id === item.id) : data.value.requests.find(value => value.id === item.id);
+        if (node) node.position = position;
+      }
+      for (const doc of result.requests) {
+        updateSummary(doc);
+        const tab = tabs[doc.id];
+        const original = submitted.find(item => item.id === doc.id)!;
+        if (!tab) continue;
+        tab.saved = clone(doc);
+        if (editable(tab.draft) === editable(original.draft ?? tab.saved)) tab.draft = clone(doc);
+        else { tab.draft.folderId = doc.folderId; tab.draft.position = doc.position; tab.draft.revision = doc.revision; tab.draft.updatedAt = doc.updatedAt; }
+      }
+      notifications.success("Requests moved successfully");
+    } catch (e) {
+      notifications.error("Failed to move requests");
+      throw e;
+    } finally { for (const tab of locked) tab.saving = false; }
+  }
   function selectedEnvironment(collectionId: string | null) {
     const selected = data.value.environmentSelections.find(s => s.collectionId === collectionId)?.environmentId;
     return data.value.environments.find(e => e.id === selected && e.collectionId === collectionId);
@@ -816,6 +875,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     moveSibling,
     reorderSiblings: notifyMutation(reorderSiblings, (item, items) => ({ success: unchangedOrder(item, items) ? null : "Order updated successfully", error: "Failed to update order" })),
     moveToFolder: notifyMutation(moveToFolder, (item, parentId) => ({ success: unchangedParent(item, parentId) ? null : `${item.kind === "folder" ? "Folder" : "Request"} moved successfully`, error: `Failed to move ${item.kind}` })),
+    moveFolder: notifyMutation(moveFolder, () => ({ success: "Folder moved successfully", error: "Failed to move folder" })),
+    saveAndMoveRequests,
     environmentBusy,
     transitioning,
     pendingOperations,

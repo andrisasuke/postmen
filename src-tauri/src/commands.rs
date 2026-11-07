@@ -207,6 +207,17 @@ pub async fn update_folder(
     .await
 }
 #[tauri::command]
+pub async fn move_folder(
+    window: WebviewWindow,
+    db: State<'_, Database>,
+    input: MoveFolder,
+) -> AppResult<MoveFolderResult> {
+    work(window, db.inner().clone(), move |c| {
+        repo::move_folder(c, input)
+    })
+    .await
+}
+#[tauri::command]
 pub async fn create_request(
     window: WebviewWindow,
     db: State<'_, Database>,
@@ -238,6 +249,14 @@ pub async fn save_request(
         repo::save_request(c, input)
     })
     .await
+}
+#[tauri::command]
+pub async fn save_and_move_requests(
+    window: WebviewWindow,
+    db: State<'_, Database>,
+    input: SaveAndMoveRequests,
+) -> AppResult<SaveAndMoveRequestsResult> {
+    work(window, db.inner().clone(), move |c| repo::save_and_move_requests(c, input)).await
 }
 #[tauri::command]
 pub async fn reorder_items(
