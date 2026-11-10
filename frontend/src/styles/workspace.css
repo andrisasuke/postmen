@@ -209,6 +209,27 @@ select:focus-visible {
 .data-tree-row.active .tree-name {
   color: var(--primary);
 }
+.data-tree-row:is(.active, .selected) .method-get ~ .tree-name {
+  color: color-mix(in srgb, var(--get) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-post ~ .tree-name {
+  color: color-mix(in srgb, var(--post) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-put ~ .tree-name {
+  color: color-mix(in srgb, var(--put) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-patch ~ .tree-name {
+  color: color-mix(in srgb, var(--patch) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-delete ~ .tree-name {
+  color: color-mix(in srgb, var(--delete) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-head ~ .tree-name {
+  color: color-mix(in srgb, var(--head) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-options ~ .tree-name {
+  color: color-mix(in srgb, var(--options) 72%, #000);
+}
 .data-tree-row.has-actions {
   padding-right: 38px;
 }
