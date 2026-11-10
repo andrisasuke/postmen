@@ -6,7 +6,7 @@
 
 <p align="center">A local-first desktop REST API client built with Tauri 2, Vue 3, TypeScript, Rust and SQLite.</p>
 
-![PostMen on macOS — request editor and JSON response](assets/readme/postmen.png)
+![PostMen demo workspace with folders, request editor, and JSON response](assets/readme/postmen-showcase.png)
 
 ## Features
 
