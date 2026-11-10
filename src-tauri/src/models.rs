@@ -177,6 +177,22 @@ pub struct UpdateFolder {
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveFolder {
+    pub id: String,
+    pub target_folder_id: Option<String>,
+    #[serde(default)]
+    pub anchor_id: Option<String>,
+    #[serde(default)]
+    pub insert_after: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveFolderResult {
+    pub folder: Folder,
+    pub items: Vec<TreeRef>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateRequest {
     pub collection_id: String,
     pub folder_id: Option<String>,
@@ -215,5 +231,29 @@ pub struct TreeRef {
 pub struct Reorder {
     pub collection_id: Option<String>,
     pub parent_id: Option<String>,
+    pub items: Vec<TreeRef>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveRequestItem {
+    pub id: String,
+    pub revision: i64,
+    pub draft: Option<RequestDoc>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveAndMoveRequests {
+    pub target_folder_id: Option<String>,
+    #[serde(default)]
+    pub anchor_id: Option<String>,
+    #[serde(default)]
+    pub insert_after: bool,
+    pub requests: Vec<MoveRequestItem>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAndMoveRequestsResult {
+    pub requests: Vec<RequestDoc>,
+    // The complete destination order includes folders, whose positions also change.
     pub items: Vec<TreeRef>,
 }

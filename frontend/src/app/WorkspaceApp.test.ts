@@ -111,3 +111,36 @@ it("shortcut Save updates the same Save icon status throughout pending save", as
   expect(button().attributes("aria-label")).toBe("Saving request");
   finish(); await flushPromises(); expect(button().classes()).not.toContain("save-request-dirty"); expect(store.dirty(a.id)).toBe(false);
 });
+it("shows only dirty selected requests and Save All & Move saves and moves them", async () => {
+  store.tabs[a.id]!.draft.body = "unsaved";
+  const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
+  const target = await store.createRequest({ collectionId: a.collectionId, parentId: folder.id }, "Target");
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id, b.id, target.id], { kind: "request", targetFolderId: folder.id, anchorId: target.id, insertAfter: false });
+  await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain(a.name);
+  expect(dialog.textContent).not.toContain(b.name);
+  expect(dialog.textContent).toContain("Save All & Move");
+  const save = vi.spyOn(api, "saveAndMoveRequests");
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Save All & Move"))!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
+  expect(save).toHaveBeenCalledOnce();
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ anchorId: target.id, insertAfter: false }));
+  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
+  expect(store.data.requests.find(request => request.id === b.id)?.folderId).toBe(folder.id);
+  expect(store.data.requests.find(request => request.id === target.id)?.folderId).toBe(folder.id);
+  expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toEqual([a.id, b.id, target.id]);
+});
+it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchanged", async () => {
+  const folder = await store.createFolder({ collectionId: a.collectionId, parentId: null }, "Destination");
+  await store.moveToFolder({ kind: "request", id: a.id }, folder.id);
+  const target = await store.createRequest({ collectionId: a.collectionId, parentId: folder.id }, "Target");
+  store.tabs[a.id]!.draft.body = "keep draft";
+  wrapper.findComponent({ name: "WorkspaceSidebar" }).vm.$emit("move-requests", [a.id], { kind: "request", targetFolderId: null, anchorId: target.id, insertAfter: false });
+  await flushPromises();
+  Array.from(document.querySelectorAll('[role="dialog"] button')).find(button => button.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
+  expect(store.tabs[a.id]!.draft.body).toBe("keep draft");
+  expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
+  expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toContain(target.id);
+});

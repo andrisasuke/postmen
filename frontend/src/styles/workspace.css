@@ -206,8 +206,47 @@ select:focus-visible {
 .data-tree-row.selected {
   background: var(--hover);
 }
+.data-tree-row.active .tree-name {
+  color: var(--primary);
+}
+.data-tree-row:is(.active, .selected) .method-get ~ .tree-name {
+  color: color-mix(in srgb, var(--get) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-post ~ .tree-name {
+  color: color-mix(in srgb, var(--post) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-put ~ .tree-name {
+  color: color-mix(in srgb, var(--put) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-patch ~ .tree-name {
+  color: color-mix(in srgb, var(--patch) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-delete ~ .tree-name {
+  color: color-mix(in srgb, var(--delete) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-head ~ .tree-name {
+  color: color-mix(in srgb, var(--head) 72%, #000);
+}
+.data-tree-row:is(.active, .selected) .method-options ~ .tree-name {
+  color: color-mix(in srgb, var(--options) 72%, #000);
+}
 .data-tree-row.has-actions {
   padding-right: 38px;
+}
+.data-tree-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--primary);
+}
+.data-tree-row.folder-drop-target {
+  background: var(--hover);
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.data-tree-row.outward-drop-target {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.data-tree-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--primary);
 }
 .tree-row-actions.icon-button {
   position: absolute;
@@ -229,8 +268,40 @@ select:focus-visible {
   text-overflow: ellipsis;
 }
 .data-tree-row .method-label {
-  min-width: 29px;
-  font-size: 11px;
+  display: inline-flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .25px;
+  line-height: 1;
+  text-align: center;
+}
+.data-tree-row .method-get {
+  background: color-mix(in srgb, var(--get) 72%, #000);
+}
+.data-tree-row .method-post {
+  background: color-mix(in srgb, var(--post) 72%, #000);
+}
+.data-tree-row .method-put {
+  background: color-mix(in srgb, var(--put) 72%, #000);
+}
+.data-tree-row .method-patch {
+  background: color-mix(in srgb, var(--patch) 72%, #000);
+}
+.data-tree-row .method-delete {
+  background: color-mix(in srgb, var(--delete) 72%, #000);
+}
+.data-tree-row .method-head {
+  background: color-mix(in srgb, var(--head) 72%, #000);
+}
+.data-tree-row .method-options {
+  background: color-mix(in srgb, var(--options) 72%, #000);
 }
 .tree-guide {
   position: absolute;

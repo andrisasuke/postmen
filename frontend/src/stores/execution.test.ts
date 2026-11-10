@@ -24,6 +24,11 @@ describe("M3 execution state", () => {
     store: ReturnType<typeof useExecutionStore>,
     doc: RequestDoc;
   beforeEach(async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
     pinia = createPinia();
     setActivePinia(pinia);
     store = useExecutionStore();
@@ -39,6 +44,7 @@ describe("M3 execution state", () => {
   afterEach(() => {
     disposePinia(pinia);
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
   it("does not send in unconnected browser preview", async () => {
     await store.send(doc);

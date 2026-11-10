@@ -53,7 +53,9 @@ describe("UI primitives", () => {
       },
     });
     mounted.push(wrapper);
-    await wrapper.get("button").trigger("click", { detail: 1 });
+    wrapper.get("button").element.dispatchEvent(
+      new MouseEvent("click", { detail: 1, bubbles: true }),
+    );
     await nextTick();
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
     expect(document.activeElement).toBe(menu);

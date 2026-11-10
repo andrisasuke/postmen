@@ -256,6 +256,97 @@ pub fn update_folder(conn: &mut Connection, input: UpdateFolder) -> AppResult<Fo
     tx.commit()?;
     Ok(result)
 }
+pub fn move_folder(conn: &mut Connection, input: MoveFolder) -> AppResult<MoveFolderResult> {
+    validation::id(&input.id)?;
+    let tx = conn.transaction()?;
+    let old = tx.query_row(
+        "SELECT id,collection_id,parent_id,name,position FROM folders WHERE id=?1",
+        [&input.id],
+        folder_row,
+    )?;
+    require_parent(&tx, &old.collection_id, input.target_folder_id.as_deref())?;
+    if let Some(anchor_id) = &input.anchor_id {
+        validation::id(anchor_id)?;
+        let anchor_exists = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM requests WHERE id=?1 AND collection_id=?2 AND folder_id IS ?3)",
+            params![anchor_id, old.collection_id, input.target_folder_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !anchor_exists {
+            return Err(AppError::invalid(
+                "The request you dropped beside is no longer in the destination folder.",
+            ));
+        }
+    }
+    let mut destination = Vec::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT 'folder', id, position FROM folders WHERE collection_id=?1 AND parent_id IS ?2 UNION ALL SELECT 'request', id, position FROM requests WHERE collection_id=?1 AND folder_id IS ?2 ORDER BY 3, 2",
+        )?;
+        let rows = statement
+            .query_map(params![old.collection_id, input.target_folder_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+        for row in rows {
+            let (kind, id) = row?;
+            if kind != "folder" || id != old.id {
+                destination.push(TreeRef { kind, id });
+            }
+        }
+    }
+    let insertion = if let Some(anchor_id) = &input.anchor_id {
+        destination
+            .iter()
+            .position(|item| item.kind == "request" && item.id == *anchor_id)
+            .ok_or_else(|| {
+                AppError::invalid(
+                    "The request you dropped beside is no longer in the destination folder.",
+                )
+            })?
+            + usize::from(input.insert_after)
+    } else {
+        destination.len()
+    };
+    destination.insert(
+        insertion,
+        TreeRef {
+            kind: "folder".into(),
+            id: old.id.clone(),
+        },
+    );
+    // The schema trigger rejects self/descendant moves; this transaction then rolls back intact.
+    tx.execute(
+        "UPDATE folders SET parent_id=?1 WHERE id=?2",
+        params![input.target_folder_id, old.id],
+    )?;
+    for (position, item) in destination.iter().enumerate() {
+        match item.kind.as_str() {
+            "folder" => {
+                tx.execute(
+                    "UPDATE folders SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            "request" => {
+                tx.execute(
+                    "UPDATE requests SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            _ => return Err(AppError::invalid("Invalid destination item.")),
+        };
+    }
+    let folder = tx.query_row(
+        "SELECT id,collection_id,parent_id,name,position FROM folders WHERE id=?1",
+        [&old.id],
+        folder_row,
+    )?;
+    tx.commit()?;
+    Ok(MoveFolderResult {
+        folder,
+        items: destination,
+    })
+}
 pub fn create_request(conn: &mut Connection, input: CreateRequest) -> AppResult<RequestDoc> {
     let tx = conn.transaction()?;
     require_parent(&tx, &input.collection_id, input.folder_id.as_deref())?;
@@ -343,6 +434,148 @@ pub fn save_request(conn: &mut Connection, doc: RequestDoc) -> AppResult<Request
     let saved = get_request(&tx, &doc.id)?;
     tx.commit()?;
     Ok(saved)
+}
+pub fn save_and_move_requests(
+    conn: &mut Connection,
+    input: SaveAndMoveRequests,
+) -> AppResult<SaveAndMoveRequestsResult> {
+    if input.requests.is_empty() || input.requests.len() > 100 {
+        return Err(AppError::invalid(
+            "Choose between 1 and 100 requests to move.",
+        ));
+    }
+    let tx = conn.transaction()?;
+    let mut seen = HashSet::new();
+    let mut collection: Option<String> = None;
+    let mut originals = Vec::with_capacity(input.requests.len());
+    for item in &input.requests {
+        validation::id(&item.id)?;
+        if !seen.insert(&item.id) {
+            return Err(AppError::invalid("A request was selected more than once."));
+        }
+        let original = get_request(&tx, &item.id)?;
+        if original.revision != item.revision {
+            return Err(AppError::new(
+                "CONFLICT",
+                "A selected request changed in another operation. Your drafts were kept.",
+            ));
+        }
+        if let Some(draft) = &item.draft {
+            if draft.id != original.id
+                || draft.collection_id != original.collection_id
+                || draft.revision != original.revision
+            {
+                return Err(AppError::new(
+                    "CONFLICT",
+                    "A selected request changed in another operation. Your drafts were kept.",
+                ));
+            }
+            validation::request(draft)?;
+        }
+        match &collection {
+            Some(id) if id != &original.collection_id => {
+                return Err(AppError::invalid(
+                    "Requests cannot move between collections.",
+                ))
+            }
+            None => collection = Some(original.collection_id.clone()),
+            _ => {}
+        }
+        originals.push((item, original));
+    }
+    let collection = collection.ok_or_else(|| AppError::invalid("Choose requests to move."))?;
+    require_parent(&tx, &collection, input.target_folder_id.as_deref())?;
+    let selected: HashSet<&str> = originals
+        .iter()
+        .map(|(_, original)| original.id.as_str())
+        .collect();
+    let mut destination = Vec::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT 'folder', id, position FROM folders WHERE collection_id=?1 AND parent_id IS ?2 UNION ALL SELECT 'request', id, position FROM requests WHERE collection_id=?1 AND folder_id IS ?2 ORDER BY 3, 2"
+        )?;
+        let rows = statement.query_map(params![collection, input.target_folder_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (kind, id) = row?;
+            // A selected request anchor stays in the destination list: the other
+            // selected requests are inserted around it rather than replacing it.
+            if input.anchor_id.is_none()
+                || kind != "request"
+                || !selected.contains(id.as_str())
+                || input.anchor_id.as_deref() == Some(id.as_str())
+            {
+                destination.push(TreeRef { kind, id });
+            }
+        }
+    }
+    let insertion = if let Some(anchor_id) = &input.anchor_id {
+        validation::id(anchor_id)?;
+        let index = destination
+            .iter()
+            .position(|item| item.kind == "request" && item.id == *anchor_id)
+            .ok_or_else(|| {
+                AppError::invalid(
+                    "The request you dropped beside is no longer in the destination folder.",
+                )
+            })?;
+        index + usize::from(input.insert_after)
+    } else {
+        destination.len()
+    };
+    let moved = originals
+        .iter()
+        .filter(|(_, original)| {
+            (input.anchor_id.is_some() || original.folder_id != input.target_folder_id)
+                && input.anchor_id.as_deref() != Some(original.id.as_str())
+        })
+        .map(|(_, original)| TreeRef {
+            kind: "request".into(),
+            id: original.id.clone(),
+        })
+        .collect::<Vec<_>>();
+    destination.splice(insertion..insertion, moved);
+    for (item, original) in &originals {
+        let moving = original.folder_id != input.target_folder_id;
+        if !moving && item.draft.is_none() {
+            continue;
+        }
+        let mut doc = item.draft.clone().unwrap_or(original.clone());
+        doc.folder_id = input.target_folder_id.clone();
+        doc.position = original.position;
+        validation::request(&doc)?;
+        tx.execute("UPDATE requests SET folder_id=?1,name=?2,method=?3,url=?4,body_kind=?5,body=?6,position=?7,revision=revision+1,updated_at=?8 WHERE id=?9", params![doc.folder_id,validation::name(&doc.name)?,doc.method,doc.url,doc.body_kind,doc.body,doc.position,now(),doc.id])?;
+        if item.draft.is_some() {
+            write_request_rows(&tx, &doc)?;
+        }
+    }
+    for (position, item) in destination.iter().enumerate() {
+        match item.kind.as_str() {
+            "folder" => {
+                tx.execute(
+                    "UPDATE folders SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            "request" => {
+                tx.execute(
+                    "UPDATE requests SET position=?1 WHERE id=?2",
+                    params![position as i64, item.id],
+                )?;
+            }
+            _ => return Err(AppError::invalid("Invalid destination item.")),
+        };
+    }
+    let saved = originals
+        .iter()
+        .map(|(_, original)| get_request(&tx, &original.id))
+        .collect::<AppResult<Vec<_>>>()?;
+    tx.commit()?;
+    Ok(SaveAndMoveRequestsResult {
+        requests: saved,
+        items: destination,
+    })
 }
 pub(crate) fn write_request_rows(tx: &Connection, doc: &RequestDoc) -> AppResult<()> {
     for (table, values) in [

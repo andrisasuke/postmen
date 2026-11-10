@@ -25,7 +25,9 @@ afterEach(() => { wrapper?.unmount(); wrapper = undefined; disposePinia(pinia); 
 it("shows the active workspace, selection check and Create workspace action", async () => {
   wrapper = mount(WorkspaceSelector, { props: { disabled: false }, attachTo: document.body });
   expect(wrapper.get(".workspace-selector-name").text()).toBe("Shopping");
-  await wrapper.get('[aria-label="Select workspace"]').trigger("click", { detail: 1 });
+  wrapper.get('[aria-label="Select workspace"]').element.dispatchEvent(
+    new MouseEvent("click", { detail: 1, bubbles: true }),
+  );
   await flushPromises();
   expect(document.querySelector('[role="menuitemradio"][aria-label="Shopping"]')?.getAttribute("aria-checked")).toBe("true");
   expect(document.querySelector(".workspace-menu-heading")?.textContent).toBe("Workspaces");

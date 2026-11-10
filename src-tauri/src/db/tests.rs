@@ -75,7 +75,7 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
         let mut existing = request(c, &collection.id, None);
         existing.headers.push(row("X-Existing", "keep"));
         let saved = repo::save_request(c, existing)?;
-        let duplicated_row = saved.headers[0].clone();
+        c.execute_batch("CREATE TRIGGER fail_import_header BEFORE INSERT ON request_headers BEGIN SELECT RAISE(ABORT,'test failure'); END;")?;
         let failed = repo::create_request(
             c,
             CreateRequest {
@@ -88,7 +88,7 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
                     body_kind: "json".into(),
                     body: "{}".into(),
                     params: vec![row("inserted-first", "rollback")],
-                    headers: vec![duplicated_row],
+                    headers: vec![row("X-Imported", "rollback")],
                     form_data: vec![],
                 }),
             },
@@ -101,6 +101,403 @@ fn create_request_rolls_back_everything_when_an_imported_row_fails() {
             0
         );
         assert_eq!(repo::get_request(c, &saved.id)?.headers[0].value, "keep");
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn save_and_move_requests_is_atomic_and_preserves_visible_input_order() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let target = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Target".into(),
+            },
+        )?;
+        let first = request(c, &collection.id, None);
+        let second = request(c, &collection.id, None);
+        let mut dirty = repo::get_request(c, &first.id)?;
+        dirty.body = "saved atomically".into();
+        let saved = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: Some(target.id.clone()),
+                anchor_id: None,
+                insert_after: false,
+                requests: vec![
+                    MoveRequestItem {
+                        id: second.id.clone(),
+                        revision: second.revision,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: first.id.clone(),
+                        revision: dirty.revision,
+                        draft: Some(dirty),
+                    },
+                ],
+            },
+        )?;
+        assert_eq!(
+            saved
+                .requests
+                .iter()
+                .map(|doc| doc.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+        assert_eq!(saved.requests[0].position + 1, saved.requests[1].position);
+        assert_eq!(repo::get_request(c, &first.id)?.body, "saved atomically");
+        let before = repo::workspace(c)?;
+        let conflict = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: Some(target.id),
+                anchor_id: None,
+                insert_after: false,
+                requests: vec![
+                    MoveRequestItem {
+                        id: first.id,
+                        revision: saved.requests[1].revision - 1,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: second.id,
+                        revision: saved.requests[0].revision,
+                        draft: None,
+                    },
+                ],
+            },
+        );
+        assert_eq!(conflict.unwrap_err().code, "CONFLICT");
+        assert_eq!(
+            repo::workspace(c)?
+                .requests
+                .iter()
+                .map(|request| (
+                    &request.id,
+                    &request.folder_id,
+                    request.revision,
+                    request.position
+                ))
+                .collect::<Vec<_>>(),
+            before
+                .requests
+                .iter()
+                .map(|request| (
+                    &request.id,
+                    &request.folder_id,
+                    request.revision,
+                    request.position
+                ))
+                .collect::<Vec<_>>(),
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn save_and_move_requests_rolls_back_after_a_later_dirty_write_fails() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let target = repo::create_folder(c, CreateFolder { collection_id: collection.id.clone(), parent_id: None, name: "Target".into() })?;
+        let first_created = request(c, &collection.id, None);
+        let second_created = request(c, &collection.id, None);
+        let first = repo::get_request(c, &first_created.id)?;
+        let second = repo::get_request(c, &second_created.id)?;
+        let mut dirty_first = first.clone(); dirty_first.body = "first changed".into(); dirty_first.headers = vec![row("X-First", "one")];
+        let mut dirty_second = second.clone(); dirty_second.body = "second changed".into(); dirty_second.headers = vec![row("X-Second", "two")];
+        c.execute_batch(&format!("CREATE TRIGGER fail_second_move BEFORE INSERT ON request_headers WHEN NEW.request_id = '{}' BEGIN SELECT RAISE(ABORT,'second write failed'); END;", second.id))?;
+        let failure = repo::save_and_move_requests(c, SaveAndMoveRequests {
+            target_folder_id: Some(target.id),
+            anchor_id: None, insert_after: false,
+            requests: vec![
+                MoveRequestItem { id: first.id.clone(), revision: first.revision, draft: Some(dirty_first) },
+                MoveRequestItem { id: second.id.clone(), revision: second.revision, draft: Some(dirty_second) },
+            ],
+        });
+        assert!(failure.is_err());
+        for original in [&first, &second] {
+            let current = repo::get_request(c, &original.id)?;
+            assert_eq!(current.body, original.body);
+            assert_eq!(current.revision, original.revision);
+            assert_eq!(current.position, original.position);
+            assert_eq!(current.folder_id, original.folder_id);
+            assert_eq!(current.headers.len(), original.headers.len());
+        }
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn save_and_move_requests_moves_to_collection_root_atomically_and_keeps_root_noops_stable() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let folder = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Folder".into(),
+            },
+        )?;
+        let nested_created = request(c, &collection.id, Some(folder.id.clone()));
+        let root_created = request(c, &collection.id, None);
+        let nested = repo::get_request(c, &nested_created.id)?;
+        let root = repo::get_request(c, &root_created.id)?;
+        let mut dirty = nested.clone();
+        dirty.body = "saved while moving to root".into();
+        let saved = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: None,
+                anchor_id: None,
+                insert_after: false,
+                requests: vec![
+                    MoveRequestItem {
+                        id: nested.id.clone(),
+                        revision: nested.revision,
+                        draft: Some(dirty),
+                    },
+                    MoveRequestItem {
+                        id: root.id.clone(),
+                        revision: root.revision,
+                        draft: None,
+                    },
+                ],
+            },
+        )?;
+        assert!(saved.requests.iter().all(|doc| doc.folder_id.is_none()));
+        assert_eq!(saved.requests[0].body, "saved while moving to root");
+        assert_eq!(saved.requests[1].position + 1, saved.requests[0].position);
+        let root_after = repo::get_request(c, &root.id)?;
+        let no_op = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: None,
+                anchor_id: None,
+                insert_after: false,
+                requests: vec![MoveRequestItem {
+                    id: root.id.clone(),
+                    revision: root_after.revision,
+                    draft: None,
+                }],
+            },
+        )?;
+        assert_eq!(no_op.requests[0].revision, root_after.revision);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn save_and_move_requests_inserts_before_anchor_with_mixed_siblings() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let source = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Source".into(),
+            },
+        )?;
+        let destination = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Destination".into(),
+            },
+        )?;
+        let earlier = request(c, &collection.id, Some(destination.id.clone()));
+        let nested_folder = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: Some(destination.id.clone()),
+                name: "Nested".into(),
+            },
+        )?;
+        let target = request(c, &collection.id, Some(destination.id.clone()));
+        let later = request(c, &collection.id, Some(destination.id.clone()));
+        let first = request(c, &collection.id, Some(source.id.clone()));
+        let second = request(c, &collection.id, Some(source.id));
+        let result = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: Some(destination.id),
+                anchor_id: Some(target.id.clone()),
+                insert_after: false,
+                requests: vec![
+                    MoveRequestItem {
+                        id: first.id.clone(),
+                        revision: first.revision,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: second.id.clone(),
+                        revision: second.revision,
+                        draft: None,
+                    },
+                ],
+            },
+        )?;
+        assert_eq!(
+            result.items,
+            vec![
+                TreeRef {
+                    kind: "request".into(),
+                    id: earlier.id
+                },
+                TreeRef {
+                    kind: "folder".into(),
+                    id: nested_folder.id
+                },
+                TreeRef {
+                    kind: "request".into(),
+                    id: first.id.clone()
+                },
+                TreeRef {
+                    kind: "request".into(),
+                    id: second.id.clone()
+                },
+                TreeRef {
+                    kind: "request".into(),
+                    id: target.id
+                },
+                TreeRef {
+                    kind: "request".into(),
+                    id: later.id
+                },
+            ]
+        );
+        assert_eq!(repo::get_request(c, &first.id)?.position, 2);
+        assert_eq!(repo::get_request(c, &second.id)?.position, 3);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn save_and_move_requests_keeps_a_selected_anchor_and_rolls_back_on_failure() {
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let collection = collection(c);
+        let source = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Source".into(),
+            },
+        )?;
+        let destination = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: collection.id.clone(),
+                parent_id: None,
+                name: "Destination".into(),
+            },
+        )?;
+        let anchor = request(c, &collection.id, Some(destination.id.clone()));
+        let first = request(c, &collection.id, Some(source.id.clone()));
+        let second = request(c, &collection.id, Some(source.id));
+        let before = repo::workspace(c)?;
+        let result = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: Some(destination.id.clone()),
+                anchor_id: Some(anchor.id.clone()),
+                insert_after: false,
+                requests: vec![
+                    MoveRequestItem {
+                        id: first.id.clone(),
+                        revision: first.revision,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: anchor.id.clone(),
+                        revision: anchor.revision,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: second.id.clone(),
+                        revision: second.revision,
+                        draft: None,
+                    },
+                ],
+            },
+        )?;
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![first.id.as_str(), second.id.as_str(), anchor.id.as_str()]
+        );
+        assert_eq!(
+            repo::get_request(c, &anchor.id)?.folder_id.as_deref(),
+            Some(destination.id.as_str())
+        );
+        let first_after = repo::get_request(c, &first.id)?;
+        let anchor_after = repo::get_request(c, &anchor.id)?;
+        let before_failure = repo::workspace(c)?;
+        let failure = repo::save_and_move_requests(
+            c,
+            SaveAndMoveRequests {
+                target_folder_id: Some(destination.id),
+                anchor_id: Some(anchor.id.clone()),
+                insert_after: true,
+                requests: vec![
+                    MoveRequestItem {
+                        id: first.id.clone(),
+                        revision: first_after.revision - 1,
+                        draft: None,
+                    },
+                    MoveRequestItem {
+                        id: anchor.id.clone(),
+                        revision: anchor_after.revision,
+                        draft: None,
+                    },
+                ],
+            },
+        );
+        assert_eq!(failure.unwrap_err().code, "CONFLICT");
+        let after = repo::workspace(c)?;
+        assert_ne!(before.requests.len(), 0);
+        assert_eq!(
+            after
+                .requests
+                .iter()
+                .map(|request| (
+                    &request.id,
+                    &request.folder_id,
+                    request.position,
+                    request.revision
+                ))
+                .collect::<Vec<_>>(),
+            before_failure
+                .requests
+                .iter()
+                .map(|request| (
+                    &request.id,
+                    &request.folder_id,
+                    request.position,
+                    request.revision
+                ))
+                .collect::<Vec<_>>()
+        );
         Ok(())
     })
     .unwrap();
@@ -465,6 +862,131 @@ fn folder_relationships_cycle_and_cross_collection_are_rejected() {
             }
         )
         .is_err());
+        Ok(())
+    })
+    .unwrap();
+}
+#[test]
+fn move_folder_orders_with_request_anchor_and_persists_safely() {
+    let (_dir, db) = fixture();
+    let (collection_id, source_id, target_id, anchor_id, other_collection_id) = db
+        .run(|c| {
+            let collection = collection(c);
+            let other = repo::create_collection(
+                c,
+                CreateCollection {
+                    name: "Other API".into(),
+                },
+            )?;
+            let parent = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: None,
+                    name: "Parent".into(),
+                },
+            )?;
+            let source = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: Some(parent.id),
+                    name: "Source".into(),
+                },
+            )?;
+            let target = repo::create_folder(
+                c,
+                CreateFolder {
+                    collection_id: collection.id.clone(),
+                    parent_id: None,
+                    name: "Target".into(),
+                },
+            )?;
+            let earlier = request(c, &collection.id, Some(target.id.clone()));
+            let anchor = request(c, &collection.id, Some(target.id.clone()));
+            let later = request(c, &collection.id, Some(target.id.clone()));
+            let moved = repo::move_folder(
+                c,
+                MoveFolder {
+                    id: source.id.clone(),
+                    target_folder_id: Some(target.id.clone()),
+                    anchor_id: Some(anchor.id.clone()),
+                    insert_after: false,
+                },
+            )?;
+            assert_eq!(moved.folder.parent_id, Some(target.id.clone()));
+            assert_eq!(
+                moved.items,
+                vec![
+                    TreeRef {
+                        kind: "request".into(),
+                        id: earlier.id
+                    },
+                    TreeRef {
+                        kind: "folder".into(),
+                        id: source.id.clone()
+                    },
+                    TreeRef {
+                        kind: "request".into(),
+                        id: anchor.id.clone()
+                    },
+                    TreeRef {
+                        kind: "request".into(),
+                        id: later.id
+                    },
+                ]
+            );
+            Ok((collection.id, source.id, target.id, anchor.id, other.id))
+        })
+        .unwrap();
+    db.run(|c| {
+        let workspace = repo::workspace(c)?;
+        assert_eq!(
+            workspace
+                .folders
+                .iter()
+                .find(|folder| folder.id == source_id)
+                .unwrap()
+                .parent_id,
+            Some(target_id.clone())
+        );
+        assert!(repo::move_folder(
+            c,
+            MoveFolder {
+                id: target_id.clone(),
+                target_folder_id: Some(source_id.clone()),
+                anchor_id: None,
+                insert_after: false,
+            }
+        )
+        .is_err());
+        let other_target = repo::create_folder(
+            c,
+            CreateFolder {
+                collection_id: other_collection_id,
+                parent_id: None,
+                name: "Other".into(),
+            },
+        )?;
+        assert!(repo::move_folder(
+            c,
+            MoveFolder {
+                id: source_id.clone(),
+                target_folder_id: Some(other_target.id),
+                anchor_id: Some(anchor_id),
+                insert_after: false,
+            }
+        )
+        .is_err());
+        assert_eq!(
+            repo::workspace(c)?
+                .folders
+                .iter()
+                .find(|folder| folder.id == source_id)
+                .unwrap()
+                .collection_id,
+            collection_id
+        );
         Ok(())
     })
     .unwrap();
