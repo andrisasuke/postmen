@@ -16,6 +16,7 @@
 - Send requests through native Rust HTTP and inspect response status, timing, headers and body. Cancel requests, review execution history, and restore the last result for each request.
 - Import Postman Collection v2.0/v2.1 JSON, export v2.1 JSON, create requests from cURL, and generate cURL from a draft.
 - Choose light, dark or system theme; use keyboard shortcuts and saved window layout. Quit warns about unsaved drafts.
+- Right-click a request tab and choose **Close Others** to keep and activate it. Dirty drafts in other tabs get one Save All / Discard / Cancel prompt; active target requests require cancellation confirmation.
 
 ## Development
 
@@ -44,6 +45,7 @@ The app bundle is `src-tauri/target/release/bundle/macos/Postmen.app`. Local bun
 
 - Create or switch workspaces from the title-bar dropdown. The default workspace opens at startup; saved tabs are restored per workspace.
 - Use Cmd/Ctrl-click to select multiple requests in one collection, then drag a selected request onto a folder. If any selected request has unsaved changes, choose **Save All & Move** or **Cancel**.
+- Right-click a request tab and choose **Close Others**. The clicked tab keeps its draft and response; other drafts are saved or discarded only after confirmation, and running target requests are cancelled only after confirmation.
 - Enter `<<name>>` in a URL, query parameter or header to use an environment variable. Body and multipart values are not substituted.
 - Use the sidebar arrows to import or export collections. Import previews validation warnings; export asks before overwriting files.
 - Click the `</>` icon beside Save to preview and copy cURL for the current draft. Review resolved credentials and local file paths before sharing it.

@@ -59,6 +59,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const sessionError = ref("");
   const environmentBusy = ref(false);
   const transitioning = ref(false);
+  const batchClosing = ref(false);
   const pendingOperations = ref(0);
   const attachments = reactive<Record<string, Attachment>>({});
   const settings = useSettingsStore();
@@ -119,7 +120,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     });
   }
   async function beginWorkspaceTransition() {
-    if (transitioning.value || loading.value || pendingOperations.value || opening.size
+    if (batchClosing.value || transitioning.value || loading.value || pendingOperations.value || opening.size
       || environmentBusy.value || Object.values(tabs).some(tab => tab.saving)) {
       throw new DataError("BUSY", "Wait for current operations to finish before changing workspaces.");
     }
@@ -168,8 +169,61 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       ),
     });
   }
+  function closeOthersTargets(keepId: string, targetIds: string[]) {
+    if (batchClosing.value || transitioning.value || loading.value || pendingOperations.value || opening.size
+      || environmentBusy.value || Object.values(tabs).some(tab => tab.saving)
+      || !tabs[keepId] || tabIds.value.length < 2
+      || targetIds.length !== tabIds.value.length - 1
+      || tabIds.value.some(id => id !== keepId && !targetIds.includes(id))) return false;
+    batchClosing.value = true;
+    if (timer) clearTimeout(timer);
+    capturePane();
+    return true;
+  }
+  async function persistCloseOthersSession(keepId: string): Promise<boolean> {
+    if (!batchClosing.value || !tabs[keepId] || !api) return false;
+    const service = api;
+    const payload = clone({ tabIds: [keepId], activeId: keepId, views: { [keepId]: tabs[keepId]!.view } });
+    const serialized = sessionContent(payload);
+    const next = sessionQueue.then(async () => {
+      if (persistedSessions.get(service) === serialized) return;
+      const saved = await service.saveSession(payload);
+      persistedSessions.set(service, sessionContent(saved));
+    }).then(() => { sessionError.value = ""; });
+    sessionQueue = next.catch(error => {
+      persistedSessions.delete(service);
+      sessionError.value = errorMessage(error);
+    });
+    try { await next; return true; } catch { return false; }
+  }
+  function commitCloseOthers(keepId: string, targetIds: string[], discardTargets: boolean) {
+    if (!batchClosing.value || !tabs[keepId] || targetIds.some(id => !tabs[id])
+      || new Set(targetIds).size !== targetIds.length
+      || targetIds.includes(keepId)
+      || tabIds.value.length !== targetIds.length + 1
+      || tabIds.value.some(id => id !== keepId && !targetIds.includes(id))) return false;
+    for (const id of targetIds) {
+      if (discardTargets) {
+        tabs[id]!.draft = clone(tabs[id]!.saved);
+        tabs[id]!.editorState = null;
+      }
+      delete tabs[id];
+    }
+    tabIds.value = [keepId];
+    activeId.value = keepId;
+    selectedCollectionId.value = tabs[keepId]!.draft.collectionId;
+    Object.assign(settings.preferences, clone(tabs[keepId]!.view.pane));
+    batchClosing.value = false;
+    return true;
+  }
+  function releaseCloseOthers() {
+    if (!batchClosing.value) return;
+    batchClosing.value = false;
+    scheduleSession();
+  }
   async function persistSession(): Promise<boolean> {
     if (timer) clearTimeout(timer);
+    if (batchClosing.value) return false;
     if (sessionSuspended) return false;
     if (!ready.value || !api) return true;
     const payload = session();
@@ -193,7 +247,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
   function scheduleSession() {
     if (timer) clearTimeout(timer);
-    if (ready.value && !transitioning.value)
+    if (ready.value && !transitioning.value && !batchClosing.value)
       timer = setTimeout(() => {
         void persistSession();
       }, 250);
@@ -879,6 +933,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     saveAndMoveRequests,
     environmentBusy,
     transitioning,
+    batchClosing,
+    closeOthersTargets,
+    persistCloseOthersSession,
+    commitCloseOthers,
+    releaseCloseOthers,
     pendingOperations,
     beginWorkspaceTransition,
     applyWorkspace,

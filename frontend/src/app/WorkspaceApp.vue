@@ -6,6 +6,7 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  toRef,
   watch,
 } from "vue";
 import {
@@ -22,6 +23,7 @@ import WorkspaceNameForm from "../features/WorkspaceNameForm.vue";
 import WorkspaceManager from "../features/WorkspaceManager.vue";
 import { useSettingsStore } from "../stores/settings";
 import { useViewport } from "../composables/useViewport";
+import { useTabScroll } from "../composables/useTabScroll";
 import type { BootstrapInfo, ShellAction } from "../types/shell";
 import { clone, type MoveDestination, type Parent, type TreeRef, type RequestDoc } from "../types/data";
 import TitleBar from "../components/layout/TitleBar.vue";
@@ -50,6 +52,9 @@ import AppIcon from "../components/ui/AppIcon.vue";
 import ToastHost from "../components/ui/ToastHost.vue";
 
 const store = useWorkspaceStore();
+const { bar: tabBar, viewport: tabViewport, content: tabContent, newAction: newTabAction,
+  overflowing: tabsOverflowing, canScrollLeft, canScrollRight, updateEdges: updateTabEdges,
+  scroll: scrollTabs } = useTabScroll(toRef(store, "activeId"));
 const workspaces = useWorkspacesStore();
 const executions = useExecutionStore();
 watch(
@@ -94,6 +99,14 @@ const busy = ref(false);
 const draggingTab = ref<string | null>(null);
 const tabMenu = ref<InstanceType<typeof UiMenu>>();
 const tabContext = ref<string | null>(null);
+const closeOthersOpen = ref(false);
+const closeOthersBusy = ref(false);
+const closeOthersError = ref("");
+const closeOthersKeep = ref<string | null>(null);
+const closeOthersTargets = ref<string[]>([]);
+const closeOthersHadDirty = ref(false);
+const closeOthersExecutions = ref<string[]>([]);
+const quitRequestedAfterClose = ref(false);
 const visible = computed(() =>
   width.value < 940 ? compact.value : !settings.preferences.sidebarCollapsed,
 );
@@ -130,6 +143,7 @@ const selectedName = (item: TreeRef | null) =>
 const modalOpen = computed(
   () =>
     quitOpen.value ||
+    closeOthersOpen.value || store.batchClosing ||
     workspaces.creating ||
     workspaces.busy ||
     workspaces.needsRecovery ||
@@ -320,6 +334,57 @@ async function resolveClose(save: boolean) {
     busy.value = false;
   }
 }
+const dirtyCloseOthers = computed(() => closeOthersTargets.value.filter(id => store.dirty(id)));
+function requestCloseOthers(keepId: string) {
+  if (modalOpen.value || store.tabIds.length < 2 || !store.tabs[keepId]) return;
+  const targets = store.tabIds.filter(id => id !== keepId);
+  const dirty = targets.filter(id => store.dirty(id));
+  const active = targets.filter(id => executions.states[id] && executions.states[id]!.phase !== "done");
+  closeOthersKeep.value = keepId;
+  closeOthersTargets.value = targets;
+  closeOthersHadDirty.value = dirty.length > 0;
+  closeOthersExecutions.value = active;
+  closeOthersError.value = "";
+  if (dirty.length || active.length) closeOthersOpen.value = true;
+  else void performCloseOthers(false, false);
+}
+async function performCloseOthers(save: boolean, discardTargets: boolean) {
+  const keepId = closeOthersKeep.value;
+  const targets = [...closeOthersTargets.value];
+  if (!keepId || closeOthersBusy.value || !store.closeOthersTargets(keepId, targets)) return;
+  closeOthersBusy.value = true;
+  closeOthersError.value = "";
+  try {
+    if (save) {
+      for (const id of targets.filter(id => store.dirty(id))) {
+        if (!(await store.save(id))) throw new Error(`Could not save ${store.tabs[id]?.draft.name ?? "a request"}. Review the draft and retry.`);
+      }
+      if (targets.some(id => store.dirty(id))) throw new Error("A target changed during save. Review it and retry.");
+    }
+    const active = targets.filter(id => executions.states[id] && executions.states[id]!.phase !== "done");
+    const cancellations = await Promise.allSettled(active.map(id => executions.cancel(id)));
+    const failed = cancellations.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    if (!(await store.persistCloseOthersSession(keepId))) throw new Error("The final tab session could not be saved. Retry or cancel.");
+    if (!store.commitCloseOthers(keepId, targets, discardTargets)) throw new Error("The tab set changed before Close Others could commit. Retry.");
+    for (const id of targets) executions.discard(id);
+    closeOthersOpen.value = false;
+    closeOthersKeep.value = null;
+    closeOthersTargets.value = [];
+    await nextTick(); updateTabEdges();
+  } catch (error) {
+    closeOthersError.value = errorMessage(error);
+    store.error = closeOthersError.value;
+  } finally {
+    store.releaseCloseOthers();
+    closeOthersBusy.value = false;
+    if (quitRequestedAfterClose.value) {
+      quitRequestedAfterClose.value = false;
+      closeOthersOpen.value = false;
+      quitOpen.value = true;
+    }
+  }
+}
 async function deleteItem() {
   if (!deleting.value || busy.value) return;
   busy.value = true;
@@ -389,6 +454,7 @@ async function reloadRequest() {
 }
 async function action(value: ShellAction) {
   if (value === "request-quit") {
+    if (store.batchClosing || closeOthersBusy.value) { quitRequestedAfterClose.value = true; return; }
     if (workspaces.creating || workspaces.busy || workspaces.needsRecovery) {
       store.error = "Confirm or cancel workspace creation, then quit again.";
       return;
@@ -511,6 +577,7 @@ function tabAction(value: string) {
   const id = tabContext.value;
   if (!id) return;
   if (value === "close") close(id);
+  else if (value === "close-others") requestCloseOthers(id);
   else if (value === "reload") {
     reloading.value = id;
     modalError.value = "";
@@ -592,7 +659,7 @@ onUnmounted(() => {
       <h1>Unable to display this screen</h1>
       <p>{{ store.error }}</p>
     </div>
-    <div v-else class="app-main">
+    <div v-else class="app-main" :inert="store.batchClosing">
       <button
         v-if="width < 940 && visible"
         class="sidebar-backdrop"
@@ -657,65 +724,87 @@ onUnmounted(() => {
           <EnvironmentSelector v-if="!workspaces.creating" :collection-id="store.activeCollectionId" @configure="environmentScope = $event" />
         </header>
         <p v-if="workspaces.creating && workspaces.failure" id="workspace-name-error" class="inline-error workspace-create-error" role="alert">{{ workspaces.failure }}</p>
-        <div class="request-tabs-bar">
+        <div :ref="element => tabBar = element as HTMLElement" class="request-tabs-bar">
+          <IconButton
+            v-if="tabsOverflowing"
+            class="tab-scroll-action"
+            label="Scroll tabs left"
+            icon="left"
+            :disabled="!canScrollLeft"
+            @click="scrollTabs(-1)"
+          />
           <div
+            :ref="element => tabViewport = element as HTMLElement"
             class="request-tabs"
             role="tablist"
             aria-label="Open requests"
             @keydown="tabKey"
+            @scroll="updateTabEdges"
           >
-            <div v-if="workspaces.creating || !store.activeId" class="request-tab active overview-tab">
-              <span><AppIcon name="home" :size="14" />Overview</span>
-            </div>
-            <div
-              v-for="id in workspaces.creating ? [] : store.tabIds"
-              :key="id"
-              class="request-tab"
-              :class="{ active: store.activeId === id, dirty: store.dirty(id) }"
-              draggable="true"
-              @dragstart="
-                draggingTab = id;
-                $event.dataTransfer?.setData('text/plain', id);
-              "
-              @dragover.prevent
-              @drop="dropTab($event, id)"
-              @dragend="draggingTab = null"
-              @contextmenu="tabContextMenu($event, id)"
-            >
-              <button
-                role="tab"
-                :data-request-tab="id"
-                :aria-selected="store.activeId === id"
-                :tabindex="store.activeId === id ? 0 : -1"
-                @click="!modalOpen && store.activate(id)"
+            <div :ref="element => tabContent = element as HTMLElement" class="request-tabs-content">
+              <div v-if="workspaces.creating || !store.activeId" class="request-tab active overview-tab">
+                <span><AppIcon name="home" :size="14" />Overview</span>
+              </div>
+              <div
+                v-for="id in workspaces.creating ? [] : store.tabIds"
+                :key="id"
+                class="request-tab"
+                :class="{ active: store.activeId === id, dirty: store.dirty(id) }"
+                draggable="true"
+                @dragstart="
+                  draggingTab = id;
+                  $event.dataTransfer?.setData('text/plain', id);
+                "
+                @dragover.prevent
+                @drop="dropTab($event, id)"
+                @dragend="draggingTab = null"
+                @contextmenu="tabContextMenu($event, id)"
               >
-                <span
-                  class="method-label"
-                  :class="`method-${store.tabs[id]?.draft.method.toLowerCase()}`"
-                  >{{ store.tabs[id]?.draft.method }}</span
-                ><span class="tab-name">{{ store.tabs[id]?.draft.name }}</span
-                ><span
-                  v-if="store.dirty(id)"
-                  class="dirty-dot"
-                  aria-label="Unsaved changes"
-                  >●</span
+                <button
+                  role="tab"
+                  :data-request-tab="id"
+                  :aria-selected="store.activeId === id"
+                  :tabindex="store.activeId === id ? 0 : -1"
+                  @click="!modalOpen && store.activate(id)"
                 >
-              </button>
-              <button
-                class="close-tab"
-                :aria-label="`Close ${store.tabs[id]?.draft.name}`"
-                :disabled="store.tabs[id]?.saving"
-                @click="close(id)"
-              >
-                <AppIcon name="x" :size="12" :stroke="2.5" />
-              </button>
+                  <span
+                    class="method-label"
+                    :class="`method-${store.tabs[id]?.draft.method.toLowerCase()}`"
+                    >{{ store.tabs[id]?.draft.method }}</span
+                  ><span class="tab-name">{{ store.tabs[id]?.draft.name }}</span
+                  ><span
+                    v-if="store.dirty(id)"
+                    class="dirty-dot"
+                    aria-label="Unsaved changes"
+                    >●</span
+                  >
+                </button>
+                <button
+                  class="close-tab"
+                  :aria-label="`Close ${store.tabs[id]?.draft.name}`"
+                  :disabled="store.tabs[id]?.saving"
+                  @click="close(id)"
+                >
+                  <AppIcon name="x" :size="12" :stroke="2.5" />
+                </button>
+              </div>
             </div>
           </div>
+          <div :ref="element => newTabAction = element as HTMLElement" class="new-tab-action">
+            <IconButton
+              label="New request"
+              icon="plus"
+              :disabled="!store.ready || workspaces.creating"
+              @click="createRequest()"
+            />
+          </div>
           <IconButton
-            label="New request"
-            icon="plus"
-            :disabled="!store.ready || workspaces.creating"
-            @click="createRequest()"
+            v-if="tabsOverflowing"
+            class="tab-scroll-action"
+            label="Scroll tabs right"
+            icon="right"
+            :disabled="!canScrollRight"
+            @click="scrollTabs(1)"
           />
         </div>
         <RequestEditor
@@ -786,6 +875,7 @@ onUnmounted(() => {
           },
           { id: 'reload', label: 'Reload saved request' },
           { id: 'close', label: 'Close tab' },
+          { id: 'close-others', label: 'Close Others', disabled: store.tabIds.length < 2 || store.batchClosing || workspaces.busy || workspaces.needsRecovery || store.loading || store.pendingOperations > 0 },
         ]"
         @select="tabAction"
       />
@@ -859,6 +949,24 @@ onUnmounted(() => {
         ></template
       ></UiModal
     >
+    <UiModal
+      :open="closeOthersOpen"
+      title="Close Other Tabs"
+      :busy="closeOthersBusy"
+      @close="!closeOthersBusy && (closeOthersOpen = false)"
+    >
+      <p v-if="dirtyCloseOthers.length">Save changes to these requests before closing other tabs?</p>
+      <ul v-if="dirtyCloseOthers.length" class="quit-drafts"><li v-for="id in dirtyCloseOthers" :key="id">{{ store.tabs[id]?.draft.name }}</li></ul>
+      <p v-if="closeOthersExecutions.length" class="muted">{{ closeOthersExecutions.length }} target request(s) will be cancelled. The server may already have processed them.</p>
+      <p v-if="closeOthersBusy" class="muted">Finishing the batch close…</p>
+      <p v-if="closeOthersError" class="inline-error" role="alert">{{ closeOthersError }}</p>
+      <template #footer>
+        <UiButton data-autofocus :disabled="closeOthersBusy" @click="closeOthersOpen = false">Cancel</UiButton>
+        <UiButton v-if="closeOthersHadDirty" variant="danger" :disabled="closeOthersBusy" @click="performCloseOthers(false, true)">{{ closeOthersBusy ? 'Closing…' : 'Discard and Close Others' }}</UiButton>
+        <UiButton v-if="closeOthersHadDirty" variant="primary" :disabled="closeOthersBusy" @click="performCloseOthers(true, false)">{{ closeOthersBusy ? 'Saving…' : 'Save All and Close Others' }}</UiButton>
+        <UiButton v-else variant="danger" :disabled="closeOthersBusy" @click="performCloseOthers(false, false)">{{ closeOthersBusy ? 'Cancelling…' : 'Cancel Requests and Close Others' }}</UiButton>
+      </template>
+    </UiModal>
     <UiModal
       :open="deleting !== null"
       :title="`Delete ${deleting?.kind ?? 'item'}`"

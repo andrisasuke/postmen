@@ -165,6 +165,57 @@ it("restores the startup-visible request when execution becomes ready and restor
   expect(send).not.toHaveBeenCalled();
 });
 
+it("closes only other tabs after one target-scoped confirmation and persists the keep tab", async () => {
+  store.tabs[b.id]!.draft.body = "unsaved target";
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${b.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain(b.name);
+  expect(dialog.textContent).not.toContain(a.name);
+  expect(store.tabIds).toEqual([a.id, b.id]);
+  const discard = Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Discard and Close Others"))!;
+  discard.click(); await flushPromises();
+  expect(store.tabIds).toEqual([b.id]); expect(store.activeId).toBe(b.id);
+  expect(store.tabs[b.id]!.draft.body).toBe("unsaved target");
+  expect(api.loadWorkspace && (await api.loadWorkspace()).session).toMatchObject({ tabIds: [b.id], activeId: b.id });
+});
+
+it("keeps every tab and draft open when final session persistence fails", async () => {
+  store.tabs[a.id]!.draft.body = "preserve a"; store.tabs[b.id]!.draft.body = "preserve b";
+  const saveSession = vi.spyOn(api, "saveSession").mockRejectedValueOnce(new Error("session unavailable"));
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${a.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent === "Discard and Close Others")!.click();
+  await flushPromises();
+  expect(saveSession).toHaveBeenCalled(); expect(store.tabIds).toEqual([a.id, b.id]);
+  expect(store.tabs[a.id]!.draft.body).toBe("preserve a"); expect(store.tabs[b.id]!.draft.body).toBe("preserve b");
+  expect(dialog.textContent).toContain("session unavailable");
+});
+
+it("confirms target cancellation and preserves the kept tab execution", async () => {
+  const executions = useExecutionStore();
+  const execution = createExecutionFixture();
+  executions.initialize(execution);
+  executions.states[a.id] = { executionId: "keep-running", phase: "running", startedAt: 0, result: null, failure: "", section: "response", format: "formatted", cancelRequested: false };
+  executions.states[b.id] = { executionId: "target-running", phase: "running", startedAt: 0, result: null, failure: "", section: "response", format: "formatted", cancelRequested: false };
+  const cancel = vi.spyOn(execution, "cancel");
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${a.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("1 target request(s) will be cancelled");
+  expect(store.tabIds).toHaveLength(2);
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Cancel Requests and Close Others"))!.click();
+  await flushPromises();
+  expect(cancel).toHaveBeenCalledExactlyOnceWith("target-running");
+  expect(store.tabIds).toEqual([a.id]); expect(store.activeId).toBe(a.id);
+  expect(executions.states[a.id]?.executionId).toBe("keep-running");
+  expect(executions.states[b.id]).toBeUndefined();
+});
+
 it("restores the visible request after a workspace switch and after ambiguous switch recovery", async () => {
   const executions = useExecutionStore();
   const execution = createExecutionFixture();
