@@ -99,15 +99,20 @@ impl Database {
             tx.execute_batch(include_str!("schema.sql"))?;
             tx.execute_batch(include_str!("environments.sql"))?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            tx.pragma_update(None, "user_version", 2)?;
+            tx.execute_batch(include_str!("last_executions.sql"))?;
+            tx.pragma_update(None, "user_version", 3)?;
         } else if version == 1 && app_id == APPLICATION_ID {
             // Retire Base URL only; retain collections, requests, rows and session.
             tx.execute_batch(
                 "ALTER TABLE requests DROP COLUMN hostname_id; DROP TABLE hostnames;",
             )?;
             tx.execute_batch(include_str!("environments.sql"))?;
-            tx.pragma_update(None, "user_version", 2)?;
-        } else if version != 2 || app_id != APPLICATION_ID {
+            tx.execute_batch(include_str!("last_executions.sql"))?;
+            tx.pragma_update(None, "user_version", 3)?;
+        } else if version == 2 && app_id == APPLICATION_ID {
+            tx.execute_batch(include_str!("last_executions.sql"))?;
+            tx.pragma_update(None, "user_version", 3)?;
+        } else if version != 3 || app_id != APPLICATION_ID {
             return Err(AppError::new("UNSUPPORTED_SCHEMA", "This database was created by an incompatible application version. No migration was attempted."));
         }
         tx.commit()?;

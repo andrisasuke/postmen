@@ -68,6 +68,12 @@ impl ExecutionResult {
         value
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastExecution {
+    pub completed_at: i64,
+    pub result: ExecutionResult,
+}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySummary {

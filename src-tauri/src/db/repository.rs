@@ -48,6 +48,73 @@ pub fn execution_resources(conn: &Connection, doc: &RequestDoc) -> AppResult<Exe
     }
     Ok(paths)
 }
+// JSON escaping and character decoding can expand the one MiB preview substantially.
+const MAX_SNAPSHOT_JSON_BYTES: usize = 16 * 1024 * 1024;
+
+pub fn save_last_execution(
+    conn: &Connection,
+    result: &crate::execution::models::ExecutionResult,
+    completed_at: i64,
+) -> AppResult<()> {
+    validation::id(&result.request_id)?;
+    validation::id(&result.execution_id)?;
+    if completed_at < 0 {
+        return Err(AppError::invalid("Invalid completion timestamp."));
+    }
+    let mut stored = result.clone();
+    stored.history_warning = None;
+    let json = serde_json::to_string(&stored).map_err(|_| AppError::database())?;
+    if json.len() > MAX_SNAPSHOT_JSON_BYTES {
+        return Err(AppError::invalid(
+            "The execution snapshot exceeds the storage limit.",
+        ));
+    }
+    conn.execute(
+        "INSERT INTO last_executions(request_id, execution_id, completed_at, result_json) SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM requests WHERE id=?1) ON CONFLICT(request_id) DO UPDATE SET execution_id=excluded.execution_id, completed_at=excluded.completed_at, result_json=excluded.result_json",
+        params![result.request_id, result.execution_id, completed_at, json],
+    )?;
+    Ok(())
+}
+
+pub fn get_last_execution(
+    conn: &Connection,
+    request_id: &str,
+) -> AppResult<Option<crate::execution::models::LastExecution>> {
+    use crate::execution::models::{ExecutionResult, LastExecution};
+    validation::id(request_id)?;
+    let raw: Option<(String, i64, String)> = conn.query_row(
+        "SELECT execution_id, completed_at, result_json FROM last_executions WHERE request_id=?1",
+        [request_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional()?;
+    raw.map(|(execution_id, completed_at, json)| {
+        let corrupt = || {
+            AppError::new(
+                "DATABASE_ERROR",
+                "The saved execution could not be decoded.",
+            )
+        };
+        if json.len() > MAX_SNAPSHOT_JSON_BYTES
+            || completed_at < 0
+            || validation::id(&execution_id).is_err()
+        {
+            return Err(corrupt());
+        }
+        let mut result: ExecutionResult = serde_json::from_str(&json).map_err(|_| corrupt())?;
+        if result.request_id != request_id
+            || result.execution_id != execution_id
+            || !["success", "error", "cancelled"].contains(&result.outcome.as_str())
+            || result.preview_bytes > crate::execution::http::PREVIEW_LIMIT
+        {
+            return Err(corrupt());
+        }
+        result.history_warning = None;
+        Ok(LastExecution {
+            completed_at,
+            result,
+        })
+    })
+    .transpose()
+}
 pub fn record_execution(
     conn: &mut Connection,
     result: &crate::execution::models::ExecutionResult,
