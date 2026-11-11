@@ -51,13 +51,69 @@ pub fn execution_resources(conn: &Connection, doc: &RequestDoc) -> AppResult<Exe
 // JSON escaping and character decoding can expand the one MiB preview substantially.
 const MAX_SNAPSHOT_JSON_BYTES: usize = 16 * 1024 * 1024;
 
+// Decoding may replace each invalid byte with a three-byte replacement character.
+fn valid_snapshot(result: &crate::execution::models::ExecutionResult) -> bool {
+    // Lossy UTF-8 decoding can expand each invalid header byte to U+FFFD.
+    let headers_valid = result.headers.len() <= 1000
+        && result.headers.iter().all(|header| {
+            reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).is_ok()
+                && header.value.len() <= 3 * 65536
+        })
+        && result
+            .headers
+            .iter()
+            .map(|header| {
+                header.name.len() + header.value.len() - 2 * header.value.matches('�').count()
+            })
+            .sum::<usize>()
+            <= 65536;
+    let common = validation::id(&result.request_id).is_ok()
+        && validation::id(&result.execution_id).is_ok()
+        && result.preview_bytes <= crate::execution::http::PREVIEW_LIMIT
+        && (!result.truncated || result.preview_bytes == crate::execution::http::PREVIEW_LIMIT)
+        && result.duration_ms <= 9_007_199_254_740_991
+        && result.body.len() <= 3 * result.preview_bytes
+        && result.body_encoding.len() <= 64
+        && encoding_rs::Encoding::for_label(result.body_encoding.as_bytes()).is_some()
+        && result.status_text.len() <= 128
+        && result.error_code.as_ref().is_none_or(|s| s.len() <= 128)
+        && result.message.as_ref().is_none_or(|s| s.len() <= 4096)
+        && headers_valid;
+    common
+        && match result.outcome.as_str() {
+            "success" => {
+                result
+                    .status
+                    .is_some_and(|status| (100..=999).contains(&status))
+                    && result.error_code.is_none()
+                    && result.message.is_none()
+            }
+            "error" | "cancelled" => {
+                result.status.is_none()
+                    && result.status_text.is_empty()
+                    && result.headers.is_empty()
+                    && !result.headers_truncated
+                    && result.body.is_empty()
+                    && result.preview_bytes == 0
+                    && !result.truncated
+                    && !result.binary
+                    && result.error_code.as_ref().is_some_and(|s| !s.is_empty())
+                    && result.message.as_ref().is_some_and(|s| !s.is_empty())
+                    && (result.outcome == "cancelled")
+                        == (result.error_code.as_deref() == Some("CANCELLED"))
+            }
+            _ => false,
+        }
+}
+
 pub fn save_last_execution(
     conn: &Connection,
     result: &crate::execution::models::ExecutionResult,
     completed_at: i64,
 ) -> AppResult<()> {
-    validation::id(&result.request_id)?;
-    validation::id(&result.execution_id)?;
+    if !valid_snapshot(result) {
+        return Err(AppError::invalid("Invalid execution snapshot."));
+    }
     if completed_at < 0 {
         return Err(AppError::invalid("Invalid completion timestamp."));
     }
@@ -103,8 +159,7 @@ pub fn get_last_execution(
         let mut result: ExecutionResult = serde_json::from_str(&json).map_err(|_| corrupt())?;
         if result.request_id != request_id
             || result.execution_id != execution_id
-            || !["success", "error", "cancelled"].contains(&result.outcome.as_str())
-            || result.preview_bytes > crate::execution::http::PREVIEW_LIMIT
+            || !valid_snapshot(&result)
         {
             return Err(corrupt());
         }

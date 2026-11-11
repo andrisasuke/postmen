@@ -202,3 +202,26 @@ it("returns to management when creation from management is cancelled", () => {
   expect(workspaces.managing).toBe(true);
   expect(api.create).not.toHaveBeenCalled();
 });
+
+it("retains a live result and warning across default changes, inactive deletion, and failed selection", async () => {
+  const doc = await request();
+  workspaces.beginCreate(); workspaces.draftName = "Other"; await workspaces.change();
+  const other = workspaces.catalog!.activeId;
+  await workspaces.change(originalId);
+  const executions = useExecutionStore();
+  const state = { executionId: crypto.randomUUID(), phase: "done" as const, startedAt: 0,
+    result: { executionId: crypto.randomUUID(), requestId: doc.id, outcome: "success" as const, status: 200, statusText: "OK",
+      headers: [], headersTruncated: false, body: "live", bodyEncoding: "UTF-8", binary: false, previewBytes: 4,
+      truncated: false, durationMs: 1, errorCode: null, message: null, historyWarning: null, snapshotWarning: "save failed" },
+    failure: "", section: "response" as const, format: "raw" as const, cancelRequested: false };
+  executions.states[doc.id] = state;
+  expect(await workspaces.manage("default", other)).toBe(true);
+  expect(executions.states[doc.id]).toEqual(state);
+  expect(await workspaces.manage("default", originalId)).toBe(true);
+  workspaces.deletingId = other;
+  expect(await workspaces.manage("delete", other)).toBe(true);
+  expect(executions.states[doc.id]).toEqual(state);
+  vi.spyOn(api, "select").mockRejectedValueOnce(new DataError("INVALID_INPUT", "Selection failed"));
+  expect(await workspaces.change(crypto.randomUUID())).toBe(false);
+  expect(executions.states[doc.id]).toEqual(state);
+});

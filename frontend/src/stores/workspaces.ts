@@ -65,13 +65,12 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       }
       await workspace.beginWorkspaceTransition();
       locked = true;
-      executions.resetWorkspace();
       submitted = true;
       const result = id ? await api.select(id) : await api.create(draftName.value.trim());
-      if (id && result.catalog.activeId !== id) throw new DataError("INVALID_RESPONSE", "The desktop returned a different workspace. Reload the active workspace before editing.");
-      workspace.applyWorkspace(result.workspace, result.documents);
-      // Completed responses belong to the old workspace and must not bleed into another.
+      if ((id && result.catalog.activeId !== id) || (!id && result.catalog.activeId === catalog.value.activeId)) throw new DataError("INVALID_RESPONSE", "The desktop returned a different workspace. Reload the active workspace before editing.");
+      // Invalidate only once the active workspace change is confirmed.
       executions.resetWorkspace();
+      workspace.applyWorkspace(result.workspace, result.documents);
       catalog.value = result.catalog;
       creating.value = false;
       managing.value = false;
@@ -105,7 +104,6 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       if (executions.activeIds.length) throw new Error("Wait for running requests to finish before managing workspaces.");
       await workspace.beginWorkspaceTransition();
       locked = true;
-      executions.resetWorkspace();
       submitted = true;
       if (action === "default") {
         const result = await api.setDefault(id);
@@ -117,12 +115,13 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       } else {
         const result = await api.remove(id);
         if (result.catalog.workspaces.some(entry => entry.id === id)
-          || (!result.activation && result.catalog.activeId !== catalog.value.activeId)) {
+          || (id === catalog.value.activeId && (!result.activation || result.catalog.activeId !== catalog.value.defaultId))
+          || (id !== catalog.value.activeId && (result.activation || result.catalog.activeId !== catalog.value.activeId))) {
           throw new DataError("INVALID_RESPONSE", "Workspace deletion could not be verified. Reload the active workspace.");
         }
         if (result.activation) {
+          if (result.catalog.activeId !== catalog.value.activeId) executions.resetWorkspace();
           workspace.applyWorkspace(result.activation.workspace, result.activation.documents);
-          executions.resetWorkspace();
         }
         catalog.value = result.catalog;
         deletingId.value = null;
@@ -149,8 +148,8 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       const current = await api.list();
       const result = await api.select(current.activeId);
       if (result.catalog.activeId !== current.activeId) throw new DataError("INVALID_RESPONSE", "The active workspace changed again. Please retry.");
+      if (result.catalog.activeId !== catalog.value?.activeId) executions.resetWorkspace();
       workspace.applyWorkspace(result.workspace, result.documents);
-      executions.resetWorkspace();
       catalog.value = result.catalog;
       creating.value = false;
       failure.value = "";

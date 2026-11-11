@@ -1338,10 +1338,13 @@ fn last_execution_survives_reopen_replacement_history_pruning_and_failed_write()
         let doc = request(c, &col.id, None);
         assert!(repo::get_last_execution(c, &doc.id)?.is_none());
         let mut result = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        result.status = Some(200);
         result.body = "日本語\nbody".into();
+        result.preview_bytes = result.body.len();
         result.headers = vec![ResponseHeader { name: "x-test".into(), value: "one".into() }, ResponseHeader { name: "x-test".into(), value: "two".into() }];
         repo::save_last_execution(c, &result, 123)?;
         result.body = "replacement".into();
+        result.preview_bytes = result.body.len();
         repo::save_last_execution(c, &result, 456)?;
         for _ in 0..501 {
             let history = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
@@ -1350,6 +1353,7 @@ fn last_execution_survives_reopen_replacement_history_pruning_and_failed_write()
         assert_eq!(c.query_row("SELECT count(*) FROM request_history", [], |r| r.get::<_, i64>(0))?, 500);
         c.execute_batch("CREATE TRIGGER fail_snapshot BEFORE UPDATE ON last_executions BEGIN SELECT RAISE(ABORT,'failure'); END;")?;
         result.body = "failed".into();
+        result.preview_bytes = result.body.len();
         assert!(repo::save_last_execution(c, &result, 789).is_err());
         Ok(doc.id)
     }).unwrap();
@@ -1415,7 +1419,8 @@ fn malformed_last_execution_is_an_error_and_deleted_requests_are_not_recreated()
     db.run(|c| {
         let col = collection(c);
         let doc = request(c, &col.id, None);
-        let result = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        let mut result = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        result.status = Some(204);
         repo::save_last_execution(c, &result, 123)?;
         c.execute(
             "UPDATE last_executions SET result_json='{}' WHERE request_id=?1",
@@ -1466,4 +1471,53 @@ fn failed_schema_upgrade_rolls_back_without_changing_existing_data() {
             .unwrap(),
         "API"
     );
+}
+
+#[test]
+fn snapshot_boundary_rejects_corrupt_payloads_and_accepts_expanded_previews() {
+    use crate::execution::models::{ExecutionResult, ResponseHeader};
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let col = collection(c);
+        let doc = request(c, &col.id, None);
+        let mut value = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        value.status = Some(200);
+        value.preview_bytes = 1024 * 1024;
+        value.body = "�".repeat(value.preview_bytes);
+        value.headers = vec![ResponseHeader {
+            name: "x-test".into(),
+            value: "value".into(),
+        }];
+        repo::save_last_execution(c, &value, 1)?;
+        assert_eq!(
+            repo::get_last_execution(c, &doc.id)?.unwrap().result.body,
+            value.body
+        );
+        let mut invalid = value.clone();
+        invalid.headers = (0..1001)
+            .map(|_| ResponseHeader {
+                name: "x".into(),
+                value: "v".into(),
+            })
+            .collect();
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.status = Some(42);
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.request_id = "invalid".into();
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.body.push('x');
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.outcome = "cancelled".into();
+        c.execute(
+            "UPDATE last_executions SET result_json=?1 WHERE request_id=?2",
+            rusqlite::params![serde_json::to_string(&invalid).unwrap(), doc.id],
+        )?;
+        assert!(repo::get_last_execution(c, &doc.id).is_err());
+        Ok(())
+    })
+    .unwrap();
 }

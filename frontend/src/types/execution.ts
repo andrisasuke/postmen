@@ -4,7 +4,7 @@ export const executionSchema = z.object({
   executionId: z.string().uuid(),
   requestId: z.string().uuid(),
   outcome: z.enum(["success", "error", "cancelled"]),
-  status: z.number().int().min(100).max(599).nullable(),
+  status: z.number().int().min(100).max(999).nullable(),
   statusText: z.string(),
   headers: z.array(z.object({ name: z.string(), value: z.string() })),
   headersTruncated: z.boolean(),
