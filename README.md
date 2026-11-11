@@ -13,7 +13,7 @@
 - Organize requests in independent workspaces, collections and nested folders. Search, reorder, clone, and move requests; select several with Cmd on macOS or Ctrl on Windows/Linux, then drag them into a folder.
 - Edit URLs, query parameters, headers, JSON/raw or multipart bodies, and local file attachments. Each open request keeps its own draft and undo history.
 - Use Collection and Global environments with `<<variable>>` placeholders in URLs, parameters and headers. Collection values override Global values.
-- Send requests through native Rust HTTP and inspect response status, timing, headers and body. Cancel requests and review execution history.
+- Send requests through native Rust HTTP and inspect response status, timing, headers and body. Cancel requests, review execution history, and restore the last result for each request.
 - Import Postman Collection v2.0/v2.1 JSON, export v2.1 JSON, create requests from cURL, and generate cURL from a draft.
 - Choose light, dark or system theme; use keyboard shortcuts and saved window layout. Quit warns about unsaved drafts.
 
@@ -47,6 +47,7 @@ The app bundle is `src-tauri/target/release/bundle/macos/Postmen.app`. Local bun
 - Enter `<<name>>` in a URL, query parameter or header to use an environment variable. Body and multipart values are not substituted.
 - Use the sidebar arrows to import or export collections. Import previews validation warnings; export asks before overwriting files.
 - Click the `</>` icon beside Save to preview and copy cURL for the current draft. Review resolved credentials and local file paths before sharing it.
+- Reopen a request to see its last completed result without sending it again. The timestamp identifies historical output, which may not match the current saved request or unsaved draft. The latest completed result replaces the previous one, including HTTP errors, timeouts, transport errors and cancellations.
 
 | Action | Shortcut |
 | --- | --- |
@@ -68,7 +69,11 @@ Development: ~/Library/Application Support/com.postmen.desktop.dev/
 
 The profile contains `postmen.sqlite3` for the initial workspace, `workspaces/<UUID>/postmen.sqlite3` for additional workspaces, and `workspaces.v1.json` for the catalog. Back up the entire profile with the app closed, including SQLite sidecar files.
 
-Data is stored locally as **plaintext**, not in an encrypted vault. Unsaved drafts, undo history and response bodies exist only in memory and may be lost after a crash or force-quit. Workspace deletion removes the entry from the app but retains its database files for manual recovery; there is no in-app Restore action. Legacy application databases are not migrated.
+Data is stored locally as **plaintext**, not in an encrypted vault. The last completed result for each saved request includes its response body preview and headers, which may contain credentials or other sensitive data. PostMen stores up to 1 MiB of decompressed body preview and applies header limits; truncation and binary notices remain visible with the restored result. This is not a full response archive: execution history contains metadata only, and older history entries cannot restore bodies or headers.
+
+Closing a tab clears its in-memory result, but the saved result remains available when the request is reopened. Deleting a request removes its saved result; history cleanup does not. If saving a result fails, the live result remains visible with a warning, but a later restart may show the previous saved result. Restore failures are shown separately and can be retried.
+
+Unsaved drafts and undo history exist only in memory and may be lost after a crash or force-quit. Workspace deletion removes the entry from the app but retains its database files, including saved results, for manual recovery; there is no in-app Restore action. Legacy application databases are not migrated.
 
 ## Repository and license
 
