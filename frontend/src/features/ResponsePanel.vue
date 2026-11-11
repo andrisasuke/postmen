@@ -21,6 +21,7 @@ const bodyEditor = ref<InstanceType<typeof ResponseBody>>();
 const store = useExecutionStore();
 const state = computed(() => store.states[props.id]);
 const result = computed(() => state.value?.result);
+const restore = computed(() => store.restores[props.id]);
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => {
@@ -78,6 +79,7 @@ function bodyAction(id: string) {
         >{{ result.previewBytes.toLocaleString() }}B</span
       >
     </div>
+    <span v-if="state?.completedAt !== undefined" class="response-meta" :title="new Date(state.completedAt).toLocaleString()">Saved {{ new Date(state.completedAt).toLocaleString() }}</span>
     <UiMenu
       v-if="
         result?.body &&
@@ -97,7 +99,12 @@ function bodyAction(id: string) {
       ><AppIcon name="dots" :size="14"
     /></UiMenu>
   </div>
-  <div v-if="loading" class="response-empty" role="status">
+  <div v-if="restore?.loading" class="response-empty" role="status">Loading saved response…</div>
+  <div v-else-if="restore?.error" class="response-empty" role="alert">
+    <h3>Could not load saved response</h3><p>{{ restore.error }}</p>
+    <UiButton @click="store.restore(id, true)">Retry</UiButton>
+  </div>
+  <div v-else-if="loading" class="response-empty" role="status">
     <AppIcon name="send" :size="32" />
     <h3>
       {{ state?.phase === "cancelling" ? "Cancelling…" : "Sending request…" }}

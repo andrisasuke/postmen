@@ -65,12 +65,13 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       }
       await workspace.beginWorkspaceTransition();
       locked = true;
+      executions.resetWorkspace();
       submitted = true;
       const result = id ? await api.select(id) : await api.create(draftName.value.trim());
       if (id && result.catalog.activeId !== id) throw new DataError("INVALID_RESPONSE", "The desktop returned a different workspace. Reload the active workspace before editing.");
       workspace.applyWorkspace(result.workspace, result.documents);
       // Completed responses belong to the old workspace and must not bleed into another.
-      for (const key of Object.keys(executions.states)) delete executions.states[key];
+      executions.resetWorkspace();
       catalog.value = result.catalog;
       creating.value = false;
       managing.value = false;
@@ -104,6 +105,7 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       if (executions.activeIds.length) throw new Error("Wait for running requests to finish before managing workspaces.");
       await workspace.beginWorkspaceTransition();
       locked = true;
+      executions.resetWorkspace();
       submitted = true;
       if (action === "default") {
         const result = await api.setDefault(id);
@@ -120,7 +122,7 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
         }
         if (result.activation) {
           workspace.applyWorkspace(result.activation.workspace, result.activation.documents);
-          for (const key of Object.keys(executions.states)) delete executions.states[key];
+          executions.resetWorkspace();
         }
         catalog.value = result.catalog;
         deletingId.value = null;
@@ -148,7 +150,7 @@ export const useWorkspacesStore = defineStore("workspaces", () => {
       const result = await api.select(current.activeId);
       if (result.catalog.activeId !== current.activeId) throw new DataError("INVALID_RESPONSE", "The active workspace changed again. Please retry.");
       workspace.applyWorkspace(result.workspace, result.documents);
-      for (const key of Object.keys(executions.states)) delete executions.states[key];
+      executions.resetWorkspace();
       catalog.value = result.catalog;
       creating.value = false;
       failure.value = "";

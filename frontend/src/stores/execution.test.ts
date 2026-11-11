@@ -200,4 +200,66 @@ describe("M3 execution state", () => {
     await sending;
     expect(store.states[doc.id]).toBeUndefined();
   });
+  it("deduplicates restores and ignores a late read after Send", async () => {
+    const read = deferred<import("../types/execution").LastExecution | null>();
+    const api = createExecutionFixture();
+    api.getLastExecution = vi.fn(() => read.promise);
+    store.initialize(api);
+    const first = store.restore(doc.id);
+    const second = store.restore(doc.id);
+    expect(api.getLastExecution).toHaveBeenCalledTimes(1);
+    const sending = store.send(doc);
+    read.resolve(null);
+    await Promise.all([first, second, sending]);
+    expect(store.states[doc.id]?.result?.status).toBe(200);
+  });
+  it("forgets pending restores on close and workspace reset", async () => {
+    const reads = [deferred<import("../types/execution").LastExecution | null>(), deferred<import("../types/execution").LastExecution | null>()];
+    const api = createExecutionFixture();
+    api.getLastExecution = vi.fn().mockReturnValueOnce(reads[0]!.promise).mockReturnValueOnce(reads[1]!.promise);
+    store.initialize(api);
+    const old = store.restore(doc.id);
+    await store.forget(doc.id);
+    const reopened = store.restore(doc.id);
+    store.resetWorkspace();
+    reads[0]!.resolve(null); reads[1]!.resolve(null);
+    await Promise.all([old, reopened]);
+    expect(store.restores[doc.id]).toBeUndefined();
+    expect(store.states[doc.id]).toBeUndefined();
+  });
+  it("reports malformed identity and permits retry after read failure", async () => {
+    const api = createExecutionFixture();
+    const result: ExecutionResult = { executionId: crypto.randomUUID(), requestId: crypto.randomUUID(), outcome: "success", status: 200, statusText: "OK", headers: [], headersTruncated: false, body: "saved", bodyEncoding: "UTF-8", binary: false, previewBytes: 5, truncated: false, durationMs: 1, errorCode: null, message: null, historyWarning: null };
+    api.getLastExecution = vi.fn().mockResolvedValueOnce({ completedAt: 123, result }).mockResolvedValueOnce({ completedAt: 123, result: { ...result, requestId: doc.id } });
+    store.initialize(api);
+    await store.restore(doc.id);
+    expect(store.restores[doc.id]?.error).toBeTruthy();
+    await store.restore(doc.id, true);
+    expect(store.states[doc.id]?.result?.body).toBe("saved");
+    expect(store.activeIds).toEqual([]);
+  });
+  it("caches a missing snapshot until forgotten", async () => {
+    const api = createExecutionFixture();
+    api.getLastExecution = vi.fn().mockResolvedValue(null);
+    store.initialize(api);
+    await store.restore(doc.id); await store.restore(doc.id);
+    expect(api.getLastExecution).toHaveBeenCalledTimes(1);
+    await store.forget(doc.id); await store.restore(doc.id);
+    expect(api.getLastExecution).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a late snapshot from an earlier workspace out of the current one", async () => {
+    const oldRead = deferred<import("../types/execution").LastExecution | null>();
+    const api = createExecutionFixture();
+    const result: ExecutionResult = { executionId: crypto.randomUUID(), requestId: doc.id, outcome: "success", status: 200, statusText: "OK", headers: [], headersTruncated: false, body: "old workspace", bodyEncoding: "UTF-8", binary: false, previewBytes: 13, truncated: false, durationMs: 1, errorCode: null, message: null, historyWarning: null };
+    api.getLastExecution = vi.fn().mockReturnValueOnce(oldRead.promise).mockResolvedValueOnce({ completedAt: 200, result: { ...result, body: "new workspace" } });
+    store.initialize(api);
+    const old = store.restore(doc.id);
+    store.resetWorkspace();
+    await store.restore(doc.id);
+    oldRead.resolve({ completedAt: 100, result });
+    await old;
+    expect(store.states[doc.id]?.result?.body).toBe("new workspace");
+  });
+
 });

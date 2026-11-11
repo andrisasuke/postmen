@@ -52,6 +52,13 @@ import ToastHost from "../components/ui/ToastHost.vue";
 const store = useWorkspaceStore();
 const workspaces = useWorkspacesStore();
 const executions = useExecutionStore();
+watch(
+  () => [store.activeId, executions.ready, workspaces.busy, workspaces.needsRecovery] as const,
+  ([id, ready, busy, recovery]) => {
+    if (id && ready && !busy && !recovery) void executions.restore(id);
+  },
+  { immediate: true },
+);
 const quitOpen = ref(false);
 const fixtureClosed = ref(false);
 const development = import.meta.env.DEV;
