@@ -130,11 +130,13 @@ function bodyAction(id: string) {
     </h3>
     <p>{{ state?.failure || result?.message }}</p>
     <p v-if="result">{{ result.durationMs }} ms</p>
+    <p v-if="result?.snapshotWarning" class="inline-error" role="alert">{{ result.snapshotWarning }}</p>
     <p v-if="result?.historyWarning" class="inline-error">
       {{ result.historyWarning }}
     </p>
   </div>
   <template v-else-if="result">
+    <p v-if="result.snapshotWarning" class="response-notice" role="alert">{{ result.snapshotWarning }}</p>
     <p v-if="result.historyWarning" class="response-notice" role="alert">
       {{ result.historyWarning }}
     </p>

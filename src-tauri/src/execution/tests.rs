@@ -590,6 +590,83 @@ async fn history_omits_secrets_and_failure_never_loses_response() {
     assert!(result.history_warning.is_some());
 }
 #[tokio::test]
+async fn completion_persists_latest_result_and_reports_independent_failures() {
+    let server = server().await;
+    let (_dir, db, mut doc) = fixture();
+    doc.url = format!("{}/json", server.url);
+    let ex = Executions::new().unwrap();
+    let first = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    let saved = db
+        .run(|c| repo::get_last_execution(c, &doc.id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.result.execution_id, first.execution_id);
+    assert_eq!(saved.result.body, first.body);
+    db.run(|c| { c.execute_batch("CREATE TRIGGER fail_snapshot BEFORE UPDATE ON last_executions BEGIN SELECT RAISE(ABORT,'qa'); END;")?; Ok(()) }).unwrap();
+    let second = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(second.status, Some(200));
+    assert!(second.snapshot_warning.is_some());
+    assert!(second.history_warning.is_none());
+    assert_eq!(
+        db.run(|c| repo::get_last_execution(c, &doc.id))
+            .unwrap()
+            .unwrap()
+            .result
+            .execution_id,
+        first.execution_id
+    );
+    db.run(|c| { c.execute_batch("DROP TRIGGER fail_snapshot; CREATE TRIGGER fail_history_independent BEFORE INSERT ON request_history BEGIN SELECT RAISE(ABORT,'qa'); END;")?; Ok(()) }).unwrap();
+    let third = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert!(third.history_warning.is_some());
+    assert!(third.snapshot_warning.is_none());
+    assert_eq!(
+        db.run(|c| repo::get_last_execution(c, &doc.id))
+            .unwrap()
+            .unwrap()
+            .result
+            .execution_id,
+        third.execution_id
+    );
+}
+#[tokio::test]
+async fn cancellation_replaces_snapshot_and_deleted_request_stays_absent() {
+    let (_dir, db, mut doc) = fixture();
+    doc.url = "http://127.0.0.1:1/".into();
+    let ex = Executions::new().unwrap();
+    let execution_id = prepare(&ex, doc.clone(), 1000);
+    ex.cancel(&execution_id).unwrap();
+    let result = ex.execute(execution_id, db.clone()).await.unwrap();
+    let saved = db
+        .run(|c| repo::get_last_execution(c, &doc.id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.outcome, "cancelled");
+    assert_eq!(saved.result.execution_id, result.execution_id);
+    assert_eq!(saved.result.error_code.as_deref(), Some("CANCELLED"));
+    db.run(|c| {
+        c.execute("DELETE FROM requests WHERE id=?1", [&doc.id])?;
+        Ok(())
+    })
+    .unwrap();
+    let next = prepare(&ex, doc.clone(), 1000);
+    ex.cancel(&next).unwrap();
+    let result = ex.execute(next, db.clone()).await.unwrap();
+    assert!(result.snapshot_warning.is_none());
+    assert!(db
+        .run(|c| repo::get_last_execution(c, &doc.id))
+        .unwrap()
+        .is_none());
+}
+#[tokio::test]
 async fn connection_failure_is_safe_and_saved_draft_is_not_modified() {
     let (_dir, db, mut doc) = fixture();
     doc.url = "http://127.0.0.1:1/?secret=hidden".into();

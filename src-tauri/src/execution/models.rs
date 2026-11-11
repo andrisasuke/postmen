@@ -33,6 +33,8 @@ pub struct ExecutionResult {
     pub error_code: Option<String>,
     pub message: Option<String>,
     pub history_warning: Option<String>,
+    #[serde(default)]
+    pub snapshot_warning: Option<String>,
 }
 impl ExecutionResult {
     pub fn empty(execution_id: &str, request_id: &str) -> Self {
@@ -53,6 +55,7 @@ impl ExecutionResult {
             error_code: None,
             message: None,
             history_warning: None,
+            snapshot_warning: None,
         }
     }
     pub fn failure(execution_id: &str, request_id: &str, code: &str, message: &str) -> Self {

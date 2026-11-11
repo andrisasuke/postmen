@@ -256,7 +256,10 @@ pub async fn save_and_move_requests(
     db: State<'_, Database>,
     input: SaveAndMoveRequests,
 ) -> AppResult<SaveAndMoveRequestsResult> {
-    work(window, db.inner().clone(), move |c| repo::save_and_move_requests(c, input)).await
+    work(window, db.inner().clone(), move |c| {
+        repo::save_and_move_requests(c, input)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn reorder_items(
@@ -441,6 +444,17 @@ pub fn cancel_request(
 ) -> AppResult<()> {
     main_only(&window)?;
     executions.cancel(&execution_id)
+}
+#[tauri::command]
+pub async fn get_last_execution(
+    window: WebviewWindow,
+    db: State<'_, Database>,
+    request_id: String,
+) -> AppResult<Option<crate::execution::models::LastExecution>> {
+    work(window, db.inner().clone(), move |c| {
+        crate::db::repository::get_last_execution(c, &request_id)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn list_history(

@@ -63,6 +63,7 @@ pub fn save_last_execution(
     }
     let mut stored = result.clone();
     stored.history_warning = None;
+    stored.snapshot_warning = None;
     let json = serde_json::to_string(&stored).map_err(|_| AppError::database())?;
     if json.len() > MAX_SNAPSHOT_JSON_BYTES {
         return Err(AppError::invalid(
@@ -70,7 +71,7 @@ pub fn save_last_execution(
         ));
     }
     conn.execute(
-        "INSERT INTO last_executions(request_id, execution_id, completed_at, result_json) SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM requests WHERE id=?1) ON CONFLICT(request_id) DO UPDATE SET execution_id=excluded.execution_id, completed_at=excluded.completed_at, result_json=excluded.result_json",
+        "INSERT INTO last_executions(request_id, execution_id, completed_at, result_json) SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM requests WHERE id=?1) ON CONFLICT(request_id) DO UPDATE SET execution_id=excluded.execution_id, completed_at=excluded.completed_at, result_json=excluded.result_json WHERE excluded.completed_at >= last_executions.completed_at",
         params![result.request_id, result.execution_id, completed_at, json],
     )?;
     Ok(())
@@ -108,6 +109,7 @@ pub fn get_last_execution(
             return Err(corrupt());
         }
         result.history_warning = None;
+        result.snapshot_warning = None;
         Ok(LastExecution {
             completed_at,
             result,

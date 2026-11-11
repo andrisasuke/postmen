@@ -40,6 +40,7 @@ fn main() {
             "execute_request",
             "cancel_request",
             "list_history",
+            "get_last_execution",
             "close_guard_ready",
             "cancel_quit",
             "finish_quit",

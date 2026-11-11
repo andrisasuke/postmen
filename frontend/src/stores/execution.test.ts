@@ -71,6 +71,7 @@ describe("M3 execution state", () => {
     const fixture = createExecutionFixture();
     const events: string[] = [];
     const api: ExecutionApi = {
+      getLastExecution: (id) => fixture.getLastExecution(id),
       prepare: async (input) => {
         await gate.promise;
         events.push("prepare");
@@ -139,6 +140,7 @@ describe("M3 execution state", () => {
     const result = deferred<ExecutionResult>();
     let input!: PrepareExecution;
     store.initialize({
+      getLastExecution: async () => null,
       prepare: async (value) => {
         input = value;
       },
@@ -178,6 +180,7 @@ describe("M3 execution state", () => {
   it("cleans up a reservation after transport failure", async () => {
     const cancel = vi.fn(async () => {});
     store.initialize({
+      getLastExecution: async () => null,
       prepare: async () => {},
       execute: async () => {
         throw new Error("IPC interrupted");

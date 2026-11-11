@@ -17,8 +17,14 @@ export const executionSchema = z.object({
   errorCode: z.string().nullable(),
   message: z.string().nullable(),
   historyWarning: z.string().nullable(),
+  snapshotWarning: z.string().nullable().optional(),
 });
 export type ExecutionResult = z.infer<typeof executionSchema>;
+export const lastExecutionSchema = z.object({
+  completedAt: z.number().int().nonnegative(),
+  result: executionSchema,
+});
+export type LastExecution = z.infer<typeof lastExecutionSchema>;
 export interface PrepareExecution {
   executionId: string;
   request: RequestDoc;
@@ -28,4 +34,5 @@ export interface ExecutionApi {
   prepare(input: PrepareExecution): Promise<void>;
   execute(executionId: string): Promise<ExecutionResult>;
   cancel(executionId: string): Promise<void>;
+  getLastExecution(requestId: string): Promise<LastExecution | null>;
 }
