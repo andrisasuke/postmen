@@ -141,6 +141,20 @@ impl Executions {
         let mut result = result
             .unwrap_or_else(|e| ExecutionResult::failure(&id, &request_id, e.code, &e.message));
         result.duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        let snapshot = result.clone();
+        let snapshot_db = db.clone();
+        let completed_at = repo::now();
+        if !matches!(
+            tokio::task::spawn_blocking(move || snapshot_db.run(|c| repo::save_last_execution(
+                c,
+                &snapshot,
+                completed_at
+            )))
+            .await,
+            Ok(Ok(()))
+        ) {
+            result.snapshot_warning = Some("The response is available, but the last response could not be saved. A previous response may appear after reopening.".into());
+        }
         let history = result.clone();
         if !matches!(
             tokio::task::spawn_blocking(

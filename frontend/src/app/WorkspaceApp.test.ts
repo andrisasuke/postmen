@@ -3,6 +3,9 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, disposePinia, setActivePinia } from "pinia";
 import { defineComponent } from "vue";
 import { createMemoryApi } from "../fixtures/memory-api";
+import { createExecutionFixture } from "../fixtures/execution-api";
+import { DataError } from "../services/data";
+import type { WorkspaceCatalog, WorkspacesApi } from "../services/workspaces";
 import { clone, newRow, type RequestDoc } from "../types/data";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -143,4 +146,106 @@ it("cancelling the Save All & Move dialog leaves dirty drafts and folders unchan
   expect(store.tabs[a.id]!.draft.body).toBe("keep draft");
   expect(store.data.requests.find(request => request.id === a.id)?.folderId).toBe(folder.id);
   expect(store.siblings({ kind: "request", id: target.id }).map(item => item.id)).toContain(target.id);
+});
+
+it("restores the startup-visible request when execution becomes ready and restores another on tab activation", async () => {
+  const execution = createExecutionFixture();
+  const read = vi.spyOn(execution, "getLastExecution").mockImplementation(async id => ({ completedAt: 123, result: {
+    executionId: crypto.randomUUID(), requestId: id, outcome: "success", status: 200, statusText: "OK",
+    headers: [], headersTruncated: false, body: id, bodyEncoding: "UTF-8", binary: false,
+    previewBytes: id.length, truncated: false, durationMs: 1, errorCode: null, message: null, historyWarning: null,
+  } }));
+  const send = vi.spyOn(execution, "execute");
+  useExecutionStore().initialize(execution); await flushPromises();
+  expect(read).toHaveBeenCalledExactlyOnceWith(a.id);
+  expect(useExecutionStore().states[a.id]?.result?.body).toBe(a.id);
+  await wrapper.get(`[data-request-tab="${b.id}"]`).trigger("click"); await flushPromises();
+  expect(read).toHaveBeenLastCalledWith(b.id);
+  expect(useExecutionStore().states[b.id]?.result?.body).toBe(b.id);
+  expect(send).not.toHaveBeenCalled();
+});
+
+it("closes only other tabs after one target-scoped confirmation and persists the keep tab", async () => {
+  store.tabs[b.id]!.draft.body = "unsaved target";
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${b.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain(b.name);
+  expect(dialog.textContent).not.toContain(a.name);
+  expect(store.tabIds).toEqual([a.id, b.id]);
+  const discard = Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Discard and Close Others"))!;
+  discard.click(); await flushPromises();
+  expect(store.tabIds).toEqual([b.id]); expect(store.activeId).toBe(b.id);
+  expect(store.tabs[b.id]!.draft.body).toBe("unsaved target");
+  expect(api.loadWorkspace && (await api.loadWorkspace()).session).toMatchObject({ tabIds: [b.id], activeId: b.id });
+});
+
+it("keeps every tab and draft open when final session persistence fails", async () => {
+  store.tabs[a.id]!.draft.body = "preserve a"; store.tabs[b.id]!.draft.body = "preserve b";
+  const saveSession = vi.spyOn(api, "saveSession").mockRejectedValueOnce(new Error("session unavailable"));
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${a.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent === "Discard and Close Others")!.click();
+  await flushPromises();
+  expect(saveSession).toHaveBeenCalled(); expect(store.tabIds).toEqual([a.id, b.id]);
+  expect(store.tabs[a.id]!.draft.body).toBe("preserve a"); expect(store.tabs[b.id]!.draft.body).toBe("preserve b");
+  expect(dialog.textContent).toContain("session unavailable");
+});
+
+it("confirms target cancellation and preserves the kept tab execution", async () => {
+  const executions = useExecutionStore();
+  const execution = createExecutionFixture();
+  executions.initialize(execution);
+  executions.states[a.id] = { executionId: "keep-running", phase: "running", startedAt: 0, result: null, failure: "", section: "response", format: "formatted", cancelRequested: false };
+  executions.states[b.id] = { executionId: "target-running", phase: "running", startedAt: 0, result: null, failure: "", section: "response", format: "formatted", cancelRequested: false };
+  const cancel = vi.spyOn(execution, "cancel");
+  const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
+  await wrapper.get(`[data-request-tab="${a.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
+  menu.vm.$emit("select", "close-others"); await flushPromises();
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("1 target request(s) will be cancelled");
+  expect(store.tabIds).toHaveLength(2);
+  Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Cancel Requests and Close Others"))!.click();
+  await flushPromises();
+  expect(cancel).toHaveBeenCalledExactlyOnceWith("target-running");
+  expect(store.tabIds).toEqual([a.id]); expect(store.activeId).toBe(a.id);
+  expect(executions.states[a.id]?.executionId).toBe("keep-running");
+  expect(executions.states[b.id]).toBeUndefined();
+});
+
+it("restores the visible request after a workspace switch and after ambiguous switch recovery", async () => {
+  const executions = useExecutionStore();
+  const execution = createExecutionFixture();
+  const read = vi.spyOn(execution, "getLastExecution").mockResolvedValue(null);
+  executions.initialize(execution); await flushPromises();
+  const first = crypto.randomUUID(), second = crypto.randomUUID();
+  const catalog: WorkspaceCatalog = { version: 1, activeId: first, defaultId: first,
+    workspaces: [{ id: first, name: "First" }, { id: second, name: "Second" }] };
+  const activation = async () => {
+    const data = await api.loadWorkspace();
+    return { catalog: clone(catalog), workspace: data, documents: await Promise.all(data.session.tabIds.map(id => api.getRequest(id))) };
+  };
+  const workspacesApi: WorkspacesApi = {
+    list: async () => clone(catalog),
+    select: async id => { catalog.activeId = id; return activation(); },
+    create: async () => { throw new Error("unused"); },
+    setDefault: async () => { throw new Error("unused"); },
+    remove: async () => { throw new Error("unused"); },
+  };
+  const workspaces = useWorkspacesStore(); await workspaces.initialize(workspacesApi);
+  await store.persistSession();
+  expect(await workspaces.change(second)).toBe(true); await flushPromises();
+  expect(read).toHaveBeenCalledTimes(2);
+  const select = workspacesApi.select;
+  vi.spyOn(workspacesApi, "select").mockImplementationOnce(async id => { await select(id); throw new DataError("IPC_ERROR", "Lost response"); });
+  expect(await workspaces.change(first)).toBe(false); await flushPromises();
+  expect(workspaces.needsRecovery).toBe(true);
+  expect(read).toHaveBeenCalledTimes(2);
+  await workspaces.recover(); await flushPromises();
+  expect(workspaces.needsRecovery).toBe(false);
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).toHaveBeenLastCalledWith(a.id);
 });

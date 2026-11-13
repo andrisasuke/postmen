@@ -305,6 +305,7 @@ pub fn run() {
             commands::execute_request,
             commands::cancel_request,
             commands::list_history,
+            commands::get_last_execution,
             lifecycle::close_guard_ready,
             lifecycle::cancel_quit,
             lifecycle::finish_quit,

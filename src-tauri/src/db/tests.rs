@@ -534,6 +534,10 @@ fn new_database_is_empty_and_restart_is_not_destructive() {
     let (dir, db) = fixture();
     db.run(|c| {
         assert!(repo::workspace(c)?.collections.is_empty());
+        assert_eq!(
+            c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
+            3
+        );
         collection(c);
         Ok(())
     })
@@ -581,7 +585,7 @@ fn environment_upgrade_preserves_requests_and_retires_base_url_tables() {
     db.run(|conn| {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-            2
+            3
         );
         let saved = repo::get_request(conn, &doc.id)?;
         assert_eq!(saved.url, "/users");
@@ -1320,6 +1324,199 @@ fn session_validation_rejects_invalid_sizes_without_erasing_previous_state() {
             "LIMIT_EXCEEDED"
         );
         assert_eq!(repo::workspace(c)?.session.active_id, Some(request.id));
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn last_execution_survives_reopen_replacement_history_pruning_and_failed_write() {
+    use crate::execution::models::{ExecutionResult, ResponseHeader};
+    let (dir, db) = fixture();
+    let request_id = db.run(|c| {
+        let col = collection(c);
+        let doc = request(c, &col.id, None);
+        assert!(repo::get_last_execution(c, &doc.id)?.is_none());
+        let mut result = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        result.status = Some(200);
+        result.body = "日本語\nbody".into();
+        result.preview_bytes = result.body.len();
+        result.headers = vec![ResponseHeader { name: "x-test".into(), value: "one".into() }, ResponseHeader { name: "x-test".into(), value: "two".into() }];
+        repo::save_last_execution(c, &result, 123)?;
+        result.body = "replacement".into();
+        result.preview_bytes = result.body.len();
+        repo::save_last_execution(c, &result, 456)?;
+        for _ in 0..501 {
+            let history = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+            repo::record_execution(c, &history, "GET")?;
+        }
+        assert_eq!(c.query_row("SELECT count(*) FROM request_history", [], |r| r.get::<_, i64>(0))?, 500);
+        c.execute_batch("CREATE TRIGGER fail_snapshot BEFORE UPDATE ON last_executions BEGIN SELECT RAISE(ABORT,'failure'); END;")?;
+        result.body = "failed".into();
+        result.preview_bytes = result.body.len();
+        assert!(repo::save_last_execution(c, &result, 789).is_err());
+        Ok(doc.id)
+    }).unwrap();
+    drop(db);
+    let db = Database::new(dir.path().join("postmen.sqlite3"));
+    db.run(|c| {
+        let snapshot = repo::get_last_execution(c, &request_id)?.unwrap();
+        assert_eq!(snapshot.completed_at, 456);
+        assert_eq!(snapshot.result.body, "replacement");
+        assert_eq!(snapshot.result.headers[1].value, "two");
+        c.execute("DELETE FROM requests WHERE id=?1", [&request_id])?;
+        assert!(repo::get_last_execution(c, &request_id)?.is_none());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn schema_two_upgrade_preserves_requests_and_session() {
+    let (dir, _) = fixture();
+    let path = dir.path().join("postmen.sqlite3");
+    let mut conn = Connection::open(&path).unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    conn.execute_batch(include_str!("schema.sql")).unwrap();
+    conn.execute_batch(include_str!("environments.sql"))
+        .unwrap();
+    conn.pragma_update(None, "application_id", super::APPLICATION_ID)
+        .unwrap();
+    conn.pragma_update(None, "user_version", 2).unwrap();
+    let col = collection(&mut conn);
+    let doc = request(&mut conn, &col.id, None);
+    conn.execute(
+        "INSERT INTO app_settings VALUES ('session', '{\"kept\":true}')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let db = Database::new(path);
+    db.run(|c| {
+        assert_eq!(
+            c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
+            3
+        );
+        assert_eq!(repo::get_request(c, &doc.id)?.id, doc.id);
+        assert_eq!(
+            c.query_row(
+                "SELECT value_json FROM app_settings WHERE key='session'",
+                [],
+                |r| r.get::<_, String>(0)
+            )?,
+            "{\"kept\":true}"
+        );
+        assert!(repo::get_last_execution(c, &doc.id)?.is_none());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn malformed_last_execution_is_an_error_and_deleted_requests_are_not_recreated() {
+    use crate::execution::models::ExecutionResult;
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let col = collection(c);
+        let doc = request(c, &col.id, None);
+        let mut result = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        result.status = Some(204);
+        repo::save_last_execution(c, &result, 123)?;
+        c.execute(
+            "UPDATE last_executions SET result_json='{}' WHERE request_id=?1",
+            [&doc.id],
+        )?;
+        assert!(repo::get_last_execution(c, &doc.id).is_err());
+        c.execute("DELETE FROM requests WHERE id=?1", [&doc.id])?;
+        repo::save_last_execution(c, &result, 456)?;
+        assert!(repo::get_last_execution(c, &doc.id)?.is_none());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn failed_schema_upgrade_rolls_back_without_changing_existing_data() {
+    let (dir, _) = fixture();
+    let path = dir.path().join("postmen.sqlite3");
+    let mut conn = Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("schema.sql")).unwrap();
+    conn.execute_batch(include_str!("environments.sql"))
+        .unwrap();
+    conn.execute_batch(
+        "CREATE TABLE last_executions (marker TEXT); INSERT INTO last_executions VALUES ('keep');",
+    )
+    .unwrap();
+    conn.pragma_update(None, "application_id", super::APPLICATION_ID)
+        .unwrap();
+    conn.pragma_update(None, "user_version", 2).unwrap();
+    let col = collection(&mut conn);
+    drop(conn);
+    assert!(Database::new(path.clone()).run(|_| Ok(())).is_err());
+    let conn = Connection::open(path).unwrap();
+    assert_eq!(
+        conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        conn.query_row("SELECT marker FROM last_executions", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "keep"
+    );
+    assert_eq!(
+        conn.query_row("SELECT name FROM collections WHERE id=?1", [&col.id], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        "API"
+    );
+}
+
+#[test]
+fn snapshot_boundary_rejects_corrupt_payloads_and_accepts_expanded_previews() {
+    use crate::execution::models::{ExecutionResult, ResponseHeader};
+    let (_dir, db) = fixture();
+    db.run(|c| {
+        let col = collection(c);
+        let doc = request(c, &col.id, None);
+        let mut value = ExecutionResult::empty(&uuid::Uuid::new_v4().to_string(), &doc.id);
+        value.status = Some(200);
+        value.preview_bytes = 1024 * 1024;
+        value.body = "�".repeat(value.preview_bytes);
+        value.headers = vec![ResponseHeader {
+            name: "x-test".into(),
+            value: "value".into(),
+        }];
+        repo::save_last_execution(c, &value, 1)?;
+        assert_eq!(
+            repo::get_last_execution(c, &doc.id)?.unwrap().result.body,
+            value.body
+        );
+        let mut invalid = value.clone();
+        invalid.headers = (0..1001)
+            .map(|_| ResponseHeader {
+                name: "x".into(),
+                value: "v".into(),
+            })
+            .collect();
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.status = Some(42);
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.request_id = "invalid".into();
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.body.push('x');
+        assert!(repo::save_last_execution(c, &invalid, 2).is_err());
+        invalid = value.clone();
+        invalid.outcome = "cancelled".into();
+        c.execute(
+            "UPDATE last_executions SET result_json=?1 WHERE request_id=?2",
+            rusqlite::params![serde_json::to_string(&invalid).unwrap(), doc.id],
+        )?;
+        assert!(repo::get_last_execution(c, &doc.id).is_err());
         Ok(())
     })
     .unwrap();

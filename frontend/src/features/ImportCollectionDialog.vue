@@ -105,7 +105,7 @@ async function submit() {
       return;
     }
     // No awaited work between the successful commit and local reconciliation.
-    for (const id of affected) delete executions.states[id];
+    for (const id of affected) executions.discard(id);
     store.applyImportedCollection(result);
     preview.value = null;
     notifications.success("Collection imported successfully");

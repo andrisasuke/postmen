@@ -12,7 +12,9 @@ export function createExecutionFixture(): ExecutionApi {
     string,
     { input: PrepareExecution; cancelled: boolean; wake: (() => void) | null }
   >();
+  const snapshots = new Map<string, import("../types/execution").LastExecution>();
   return {
+    async getLastExecution(requestId) { return clone(snapshots.get(requestId) ?? null); },
     async prepare(input) {
       const snapshot = clone(input);
       snapshot.request = resolveRequest(snapshot.request, useWorkspaceStore().variablesFor(snapshot.request.collectionId));
@@ -90,10 +92,14 @@ export function createExecutionFixture(): ExecutionApi {
           : url.includes("timeout")
             ? "The request timed out."
             : null,
+        snapshotWarning: url.includes("snapshot-failure")
+          ? "The response is available, but the last response could not be saved. A previous response may appear after reopening."
+          : null,
         historyWarning: url.includes("history-failure")
           ? "History fixture could not be saved; response kept."
           : null,
       };
+      if (!result.snapshotWarning) snapshots.set(result.requestId, { completedAt: Date.now(), result: { ...result, historyWarning: null, snapshotWarning: null } });
       entries.delete(id);
       return result;
     },

@@ -556,14 +556,34 @@ pre {
 .request-tabs-bar > .icon-button {
   margin: 5px 12px;
 }
+.request-tabs-bar > .tab-scroll-action {
+  flex: 0 0 28px;
+  margin: 5px 2px;
+}
+.new-tab-action {
+  flex: 0 0 36px;
+  display: flex;
+  justify-content: center;
+  padding-top: 5px;
+}
 .request-tabs {
   display: flex;
   align-items: flex-start;
   gap: 3px;
   padding: 2px 3px 0;
-  max-width: calc(100% - 55px);
+  min-width: 0;
+  flex: 0 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
+}
+.request-tabs-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+  width: max-content;
+}
+.request-tabs-content > .request-tab {
+  flex-shrink: 0;
 }
 .request-tab {
   --request-tab-bg: var(--tab-inactive);

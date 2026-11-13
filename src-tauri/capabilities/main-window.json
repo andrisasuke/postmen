@@ -42,6 +42,7 @@
     "allow-execute-request",
     "allow-cancel-request",
     "allow-list-history",
+    "allow-get-last-execution",
     "allow-close-guard-ready",
     "allow-cancel-quit",
     "allow-finish-quit",

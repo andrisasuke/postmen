@@ -2,7 +2,7 @@ import { computed, reactive, ref } from "vue";
 import { defineStore } from "pinia";
 import { clone } from "../types/data";
 import type { RequestDoc } from "../types/data";
-import type { ExecutionApi, ExecutionResult } from "../types/execution";
+import { lastExecutionSchema, type ExecutionApi, type ExecutionResult } from "../types/execution";
 import { errorMessage } from "../services/data";
 export interface RequestExecution {
   executionId: string;
@@ -13,9 +13,11 @@ export interface RequestExecution {
   section: "response" | "headers";
   format: "formatted" | "raw";
   cancelRequested: boolean;
+  completedAt?: number;
 }
 export const useExecutionStore = defineStore("execution", () => {
   const states = reactive<Record<string, RequestExecution>>({});
+  const restores = reactive<Record<string, { loading: boolean; error: string; checked: boolean }>>({});
   const ready = ref(false);
   const timeoutMs = ref(30000);
   const activeIds = computed(() =>
@@ -24,12 +26,53 @@ export const useExecutionStore = defineStore("execution", () => {
   let api: ExecutionApi | null = null;
   const pending = new Map<string, Promise<void>>();
   const prepared = new Map<string, Promise<void>>();
+  let workspaceGeneration = 0;
+  const generations = new Map<string, number>();
+  const restoring = new Map<string, Promise<void>>();
+  function invalidate(id: string) {
+    generations.set(id, (generations.get(id) ?? 0) + 1);
+    restoring.delete(id);
+    delete restores[id];
+  }
+  function resetWorkspace() {
+    workspaceGeneration++;
+    restoring.clear();
+    generations.clear();
+    for (const id of Object.keys(restores)) delete restores[id];
+    for (const id of Object.keys(states)) delete states[id];
+  }
   function initialize(service: ExecutionApi) {
     api = service;
     ready.value = true;
   }
+  function restore(id: string, retry = false): Promise<void> {
+    if (!api || states[id] || (!retry && restores[id]?.checked)) return Promise.resolve();
+    const existing = restoring.get(id);
+    if (existing) return existing;
+    const service = api;
+    const workspace = workspaceGeneration;
+    const generation = generations.get(id) ?? 0;
+    const current = () => workspace === workspaceGeneration && generation === (generations.get(id) ?? 0);
+    restores[id] = { loading: true, error: "", checked: false };
+    const operation = (async () => {
+      try {
+        const raw = await service.getLastExecution(id);
+        const snapshot = lastExecutionSchema.nullable().parse(raw);
+        if (!current()) return;
+        if (snapshot && snapshot.result.requestId !== id) throw new Error("Saved execution request ID does not match.");
+        if (snapshot) states[id] = { executionId: snapshot.result.executionId, phase: "done", startedAt: snapshot.completedAt, completedAt: snapshot.completedAt, result: snapshot.result, failure: "", section: "response", format: "formatted", cancelRequested: false };
+        restores[id] = { loading: false, error: "", checked: true };
+      } catch (error) {
+        if (current()) restores[id] = { loading: false, error: errorMessage(error), checked: true };
+      }
+    })();
+    restoring.set(id, operation);
+    void operation.then(() => { if (restoring.get(id) === operation) restoring.delete(id); });
+    return operation;
+  }
   async function send(doc: RequestDoc): Promise<void> {
     if (!api || (states[doc.id] && states[doc.id]?.phase !== "done")) return;
+    invalidate(doc.id);
     const service = api;
     const executionId = crypto.randomUUID();
     states[doc.id] = {
@@ -99,12 +142,21 @@ export const useExecutionStore = defineStore("execution", () => {
   async function cancelAll() {
     await Promise.all(activeIds.value.map(cancel));
   }
+  function discard(id: string) {
+    invalidate(id);
+    delete states[id];
+  }
   async function forget(id: string) {
+    invalidate(id);
     await cancel(id);
     delete states[id];
   }
   return {
     states,
+    restores,
+    restore,
+    resetWorkspace,
+    discard,
     ready,
     timeoutMs,
     activeIds,
