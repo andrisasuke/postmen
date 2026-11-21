@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, disposePinia, setActivePinia } from "pinia";
-import { defineComponent } from "vue";
 import { createMemoryApi } from "../fixtures/memory-api";
 import { createExecutionFixture } from "../fixtures/execution-api";
 import { DataError } from "../services/data";
@@ -12,6 +11,8 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { useExecutionStore } from "../stores/execution";
 import WorkspaceApp from "./WorkspaceApp.vue";
 
+vi.mock("../components/editor/ShellPreview.vue", () => ({ __esModule: true, default: { props: ["code"], template: "<pre>{{ code }}</pre>" } }));
+
 const native = vi.hoisted(() => ({ generate: vi.fn(), action: undefined as ((value: string) => void) | undefined }));
 vi.mock("../services/generate-code", () => ({ generateCurl: native.generate }));
 vi.mock("../services/desktop", async importOriginal => ({
@@ -21,7 +22,6 @@ vi.mock("../services/desktop", async importOriginal => ({
   setWindowTheme: async () => {},
   onShellAction: async (callback: (value: string) => void) => { native.action = callback; return () => {}; },
 }));
-const ShellPreview = defineComponent({ props: ["code"], template: '<pre>{{ code }}</pre>' });
 let pinia: ReturnType<typeof createPinia>;
 let store: ReturnType<typeof useWorkspaceStore>;
 let api: ReturnType<typeof createMemoryApi>;
@@ -42,7 +42,7 @@ beforeEach(async () => {
     WorkspaceSelector: true, WorkspaceSidebar: true, WorkspaceManager: true, WorkspaceOverview: true,
     EnvironmentSelector: true, StatusBar: true, QuitDialog: true, ToastHost: true,
     SplitPanes: { template: '<div><slot name="request" /></div>' },
-    VariableInput: true, KeyValueTable: true, MultipartEditor: true, CodeEditor: true, ResponsePanel: true, ShellPreview,
+    VariableInput: true, KeyValueTable: true, MultipartEditor: true, CodeEditor: true, ResponsePanel: true,
   } } });
   await flushPromises();
 });

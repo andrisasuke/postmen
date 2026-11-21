@@ -1,17 +1,41 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
-import { defineComponent } from "vue";
 import { createMemoryApi } from "../fixtures/memory-api";
 import type { RequestDoc } from "../types/data";
 import GenerateCodeDialog from "./GenerateCodeDialog.vue";
 
-const api = vi.hoisted(() => ({ generate: vi.fn(), select: vi.fn() }));
-vi.mock("../services/generate-code", () => ({ generateCurl: api.generate }));
-const ShellPreview = defineComponent({
-  props: ["code"],
-  setup(_, { expose }) { expose({ selectAll: api.select }); },
-  template: '<pre aria-label="Generated cURL code">{{ code }}</pre>',
+const api = vi.hoisted(() => {
+  // Deferred gate for the dynamic ShellPreview chunk. A hoisted vi.mock factory
+  // runs only until the mocked module settles: a rejection re-runs it on the
+  // next import, while a resolution is cached, so the chunk-state tests run
+  // first and the pending test settles its gate for the remaining tests.
+  let resolveGate!: (value: unknown) => void;
+  let rejectGate!: (error: unknown) => void;
+  let gate: Promise<unknown>;
+  const arm = () => {
+    // Promise.withResolvers needs lib es2024, which tsconfig does not target.
+    gate = new Promise<unknown>((resolve, reject) => { resolveGate = resolve; rejectGate = reject; });
+  };
+  arm();
+  const select = vi.fn();
+  const stub = {
+    props: ["code"],
+    setup(_: unknown, { expose }: { expose: (value: object) => void }) { expose({ selectAll: select }); },
+    template: '<pre aria-label="Generated cURL code">{{ code }}</pre>',
+  };
+  const stubModule = { __esModule: true, default: stub };
+  return {
+    generate: vi.fn(),
+    select,
+    stubModule,
+    arm,
+    gate: () => gate,
+    failGate: (error: unknown) => rejectGate(error),
+    settleGate: (value: unknown) => resolveGate(value),
+  };
 });
+vi.mock("../services/generate-code", () => ({ generateCurl: api.generate }));
+vi.mock("../components/editor/ShellPreview.vue", () => api.gate() ?? api.stubModule);
 let wrapper: VueWrapper | undefined;
 let request: RequestDoc;
 let opener: HTMLButtonElement;
@@ -30,19 +54,60 @@ function clickBackdrop() {
   backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 async function render() {
-  wrapper = mount(GenerateCodeDialog, { props: { request }, attachTo: document.body, global: { stubs: { ShellPreview } } });
+  wrapper = mount(GenerateCodeDialog, { props: { request }, attachTo: document.body });
   await flushPromises();
   // Drain jsdom's focus/selection events before counting clipboard timers.
   if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
 }
 beforeEach(async () => {
   vi.clearAllMocks(); api.generate.mockReset().mockResolvedValue({ code });
+  api.arm();
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
   const memory = createMemoryApi(); const c = await memory.createCollection("Synthetic");
   request = await memory.createRequest({ collectionId: c.id, folderId: null, name: "Synthetic" });
   opener = document.createElement("button"); document.body.append(opener); opener.focus();
 });
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.useRealTimers(); document.body.replaceChildren(); });
+afterEach(() => {
+  // Release a still-pending chunk gate so later tests see the resolved stub.
+  api.settleGate(api.stubModule);
+  wrapper?.unmount(); wrapper = undefined; vi.useRealTimers(); document.body.replaceChildren();
+});
+it("falls back to selectable plain code when the preview chunk fails to load", async () => {
+  api.failGate(new Error("chunk failed"));
+  await render();
+  const pre = document.querySelector('pre[aria-label="Generated cURL code"]')!;
+  expect(pre.textContent).toBe(code);
+  copy().click(); await flushPromises();
+  expect(navigator.clipboard.writeText).toHaveBeenCalledExactlyOnceWith(code);
+  expect(wrapper!.emitted("close")).toBeUndefined();
+});
+
+it("stays usable and closable while the preview chunk is loading", async () => {
+  await render();
+  expect(document.querySelector('.generate-code-preview-status')?.textContent).toBe("Loading preview…");
+  expect(copy().disabled).toBe(false);
+  // Exact copy works while the chunk is still pending.
+  copy().click(); await flushPromises();
+  expect(navigator.clipboard.writeText).toHaveBeenCalledExactlyOnceWith(code);
+  expect(wrapper!.emitted("close")).toBeUndefined();
+  // Manual selection fallback: clipboard failure before the preview loads
+  // swaps in selectable plain code instead of calling the editor.
+  vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error("Denied"));
+  copy().click(); await flushPromises();
+  expect(api.select).not.toHaveBeenCalled();
+  expect(document.querySelector('.editor-message')?.textContent).toContain("Cmd/Ctrl+C");
+  expect(document.querySelector('pre[aria-label="Generated cURL code"]')?.textContent).toBe(code);
+  copy().click(); await flushPromises();
+  expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(3);
+  // The dialog still closes cleanly during the pending load.
+  document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')!.click();
+  await flushPromises();
+  expect(wrapper!.emitted("close")).toEqual([[]]);
+  wrapper!.unmount(); wrapper = undefined;
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+
 it("shows loading with Copy disabled, then renders generated code", async () => {
   let finish!: (value: { code: string }) => void;
   api.generate.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
