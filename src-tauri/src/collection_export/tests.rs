@@ -172,21 +172,37 @@ fn selected_collection_variables_override_global_and_unselected_values_are_exclu
 }
 
 #[test]
-fn preserves_raw_bodies_and_multipart_without_reading_attachment_paths() {
+fn preserves_invalid_raw_bodies_and_multipart_without_reading_attachment_paths() {
     let mut conn = database();
     let col = collection(&mut conn, "Body");
     let mut doc = request(&mut conn, &col.id, None);
     doc.body_kind = "json".into();
-    doc.body = "{\"literal\":\"<<not_substituted>>\"}\n{}".into();
+    let invalid = "{\"literal\":\"<<not_substituted>>\"}\n{}";
+    doc.body = invalid.into();
     repo::save_request(&mut conn, doc.clone()).unwrap();
     let value: Value =
         serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes).unwrap();
-    assert_eq!(value["item"][0]["request"]["body"]["raw"], doc.body);
+    assert_eq!(value["item"][0]["request"]["body"]["raw"], invalid);
     assert_eq!(
         value["item"][0]["request"]["header"][1]["value"],
         "application/json"
     );
     doc = repo::get_request(&conn, &doc.id).unwrap();
+    let commented = "{\n  /* saved note */\n  \"literal\":\"<<not_substituted>>\",\n  \"name\":\"test/* */\"\n}";
+    doc.body = commented.into();
+    repo::save_request(&mut conn, doc.clone()).unwrap();
+    let value: Value =
+        serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes).unwrap();
+    assert_eq!(
+        value["item"][0]["request"]["body"]["raw"],
+        "{\n  \"literal\": \"<<not_substituted>>\",\n  \"name\": \"test/* */\"\n}"
+    );
+    assert_eq!(
+        value["item"][0]["request"]["header"][1]["value"],
+        "application/json"
+    );
+    doc = repo::get_request(&conn, &doc.id).unwrap();
+    assert_eq!(doc.body, commented);
     doc.body_kind = "multipart".into();
     doc.form_data = vec![FormField {
         id: uuid::Uuid::new_v4().to_string(),
@@ -208,6 +224,316 @@ fn preserves_raw_bodies_and_multipart_without_reading_attachment_paths() {
         value["item"][0]["request"]["body"]["formdata"][0]["src"],
         json!([])
     );
+}
+
+#[test]
+fn cleans_export_copy_only_for_string_json_bodies_with_padding_or_comments() {
+    let mut conn = database();
+    let col = collection(&mut conn, "Export body policy");
+    let mut doc = request(&mut conn, &col.id, None);
+    doc.body_kind = "json".into();
+    let padded = "{\"a\":1,\n  \n\"b\":2}";
+    let clean = "{\n  \"a\": 1,\n  \"b\": 2\n}";
+    let cases: [(&str, Option<&str>, &str); 4] = [
+        (padded, None, clean),
+        (padded, Some("application/json"), clean),
+        (padded, Some("text/plain"), padded),
+        ("{\"a\":1}", None, "{\"a\":1}"),
+    ];
+    for (body, content_type, expected) in cases {
+        doc.body = body.into();
+        doc.headers = content_type
+            .map(|value| vec![param("Content-Type", value)])
+            .unwrap_or_default();
+        doc = repo::save_request(&mut conn, doc).unwrap();
+        let value: Value =
+            serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes)
+                .unwrap();
+        assert_eq!(
+            value["item"][0]["request"]["body"]["raw"], expected,
+            "{content_type:?}"
+        );
+        assert_eq!(repo::get_request(&conn, &doc.id).unwrap().body, body);
+    }
+
+    let unfinished = "{\"a\":1}/* unfinished PRIVATE_TAIL";
+    for (body, content_type) in [
+        (unfinished, None),
+        (unfinished, Some("application/json")),
+        ("{\"a\":1,\n  \n", None),
+        ("{\"a\":1,\n  \n", Some("application/json")),
+        ("{\n  /* note */\n  \"a\":1\n}", Some("text/plain")),
+    ] {
+        doc.body = body.into();
+        doc.headers = content_type
+            .map(|value| vec![param("Content-Type", value)])
+            .unwrap_or_default();
+        doc = repo::save_request(&mut conn, doc).unwrap();
+        let value: Value =
+            serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes)
+                .unwrap();
+        assert_eq!(
+            value["item"][0]["request"]["body"]["raw"], body,
+            "{content_type:?}"
+        );
+    }
+
+    doc.body = "{\n  /* note */\n  \"a\":1\n}".into();
+    doc.headers = vec![
+        param("Content-Type", "application/json"),
+        param("Content-Type", "application/json"),
+    ];
+    repo::save_request(&mut conn, doc).unwrap();
+    let value: Value =
+        serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes).unwrap();
+    assert_eq!(
+        value["item"][0]["request"]["body"]["raw"],
+        "{\n  /* note */\n  \"a\":1\n}"
+    );
+}
+
+#[test]
+fn preserves_export_bodies_when_placeholders_make_media_type_uncertain() {
+    let mut conn = database();
+    let col = collection(&mut conn, "Export placeholder policy");
+    let mut doc = request(&mut conn, &col.id, None);
+    doc.body_kind = "json".into();
+    let body = "{\n  /* note */\n  \"name\":\"test/* */\"\n}";
+    let clean = "{\n  \"name\": \"test/* */\"\n}";
+    let mut disabled_dynamic = param("<<mediaHeader>>", "text/plain");
+    disabled_dynamic.enabled = false;
+    let cases: [(Vec<KeyValue>, &str); 4] = [
+        (
+            vec![
+                param("<<mediaHeader>>", "text/plain"),
+                param("Content-Type", "application/json"),
+            ],
+            body,
+        ),
+        (
+            vec![
+                disabled_dynamic.clone(),
+                param("Content-Type", "application/json"),
+            ],
+            clean,
+        ),
+        (vec![param("Content-Type", "<<mediaType>>")], body),
+        (
+            vec![param(
+                "Content-Type",
+                "application/vnd.api+json; profile=\"a,b\"",
+            )],
+            clean,
+        ),
+    ];
+    for (headers, expected) in cases {
+        doc.body = body.into();
+        doc.headers = headers;
+        doc = repo::save_request(&mut conn, doc).unwrap();
+        let value: Value =
+            serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes)
+                .unwrap();
+        assert_eq!(value["item"][0]["request"]["body"]["raw"], expected);
+        assert_eq!(repo::get_request(&conn, &doc.id).unwrap().body, body);
+    }
+    doc.body = body.into();
+    doc.headers = vec![
+        param("<<mediaHeader>>", "text/plain"),
+        param("Content-Type", "application/json"),
+    ];
+    repo::save_request(&mut conn, doc).unwrap();
+    let value: Value =
+        serde_json::from_slice(&format::collection(&conn, &col.id, false).unwrap().bytes).unwrap();
+    assert!(value["item"][0]["request"]["header"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|header| header["key"] == "{{mediaHeader}}" && header["value"] == "text/plain"));
+    assert!(value["item"][0]["request"]["header"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|header| header["key"] == "Content-Type" && header["value"] == "application/json"));
+}
+
+#[test]
+fn imported_legacy_comment_padding_is_cleaned_only_in_the_export_copy() {
+    let mut conn = database();
+    let imports = crate::collection_import::Imports::default();
+    let raw = "{\n  /* old */\n  \"name\": \"test/* */\"\n}";
+    let source = json!({
+        "info": {"name": "Imported legacy", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "Legacy request", "request": {
+            "method": "POST",
+            "url": "https://example.test/legacy",
+            "body": {"mode": "raw", "raw": raw}
+        }}]
+    });
+    let preview = imports
+        .stage(&serde_json::to_vec(&source).unwrap())
+        .unwrap();
+    let token = serde_json::to_value(&preview).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let outcome = imports
+        .commit(
+            &mut conn,
+            crate::collection_import::Commit {
+                token,
+                mode: crate::collection_import::Mode::Create,
+                target_id: None,
+            },
+        )
+        .unwrap();
+    let (collection_id, workspace) = match outcome {
+        crate::collection_import::Outcome::Imported {
+            collection_id,
+            workspace,
+            ..
+        } => (collection_id, workspace),
+        _ => panic!("expected import"),
+    };
+    let request_id = workspace
+        .requests
+        .iter()
+        .find(|request| request.name == "Legacy request")
+        .unwrap()
+        .id
+        .clone();
+    let stored = repo::get_request(&conn, &request_id).unwrap();
+    assert!(crate::body_payload::has_padded_blank_line(&stored.body));
+    assert!(!stored.body.contains("/* old */"));
+    let exported: Value = serde_json::from_slice(
+        &format::collection(&conn, &collection_id, false)
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert_eq!(
+        exported["item"][0]["request"]["body"]["raw"],
+        "{\n  \"name\": \"test/* */\"\n}"
+    );
+    assert_eq!(
+        repo::get_request(&conn, &request_id).unwrap().body,
+        stored.body
+    );
+}
+
+#[test]
+fn imported_padding_with_all_line_endings_flows_through_send_curl_and_export() {
+    let mut conn = database();
+    let imports = crate::collection_import::Imports::default();
+    let bodies = [
+        ("LF", "{\n  /* note */\n  \"a\":\"test/* */\"\n}"),
+        ("CR", "{\r  /* note */\r  \"a\":\"test/* */\"\r}"),
+        ("CRLF", "{\r\n  /* note */\r\n  \"a\":\"test/* */\"\r\n}"),
+        ("No trigger", "{\"a\":\"test/* */\"}"),
+        ("Invalid", "{\"a\":1}/* note */ trailing"),
+        ("Unfinished", "{\"a\":1}/* unfinished PRIVATE_TAIL"),
+    ];
+    let source = json!({
+        "info": {"name": "Imported line endings", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": bodies.iter().map(|(name, raw)| json!({
+            "name": name,
+            "request": {
+                "method": "POST",
+                "url": "https://example.test/line-endings",
+                "body": {"mode": "raw", "raw": raw}
+            }
+        })).collect::<Vec<_>>()
+    });
+    let preview = imports
+        .stage(&serde_json::to_vec(&source).unwrap())
+        .unwrap();
+    let token = serde_json::to_value(&preview).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let outcome = imports
+        .commit(
+            &mut conn,
+            crate::collection_import::Commit {
+                token,
+                mode: crate::collection_import::Mode::Create,
+                target_id: None,
+            },
+        )
+        .unwrap();
+    let (collection_id, workspace) = match outcome {
+        crate::collection_import::Outcome::Imported {
+            collection_id,
+            workspace,
+            ..
+        } => (collection_id, workspace),
+        _ => panic!("expected import"),
+    };
+    let exported_collection: Value = serde_json::from_slice(
+        &format::collection(&conn, &collection_id, false)
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    let item = |name: &str| {
+        exported_collection["item"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    let clean = "{\n  \"a\": \"test/* */\"\n}";
+    for (name, _raw) in bodies {
+        let id = workspace
+            .requests
+            .iter()
+            .find(|request| request.name == name)
+            .unwrap()
+            .id
+            .clone();
+        let doc = repo::get_request(&conn, &id).unwrap();
+        let stored = doc.body.clone();
+        assert_eq!(doc.body_kind, "json", "{name}");
+        if name == "LF" || name == "CR" || name == "CRLF" {
+            assert!(
+                crate::body_payload::has_padded_blank_line(&stored),
+                "{name}"
+            );
+            assert!(!stored.contains("/* note */"), "{name}");
+        }
+        let headers = crate::execution::http::headers(&doc).unwrap();
+        if name == "Unfinished" {
+            let error = crate::execution::http::json_payload(&doc, &headers).unwrap_err();
+            assert_eq!(error.code, "INVALID_INPUT", "{name}");
+            let error = crate::generate_curl::generate(&conn, doc.clone()).unwrap_err();
+            assert_eq!(error.code, "INVALID_INPUT", "{name}");
+        } else {
+            let sent = crate::execution::http::json_payload(&doc, &headers)
+                .unwrap()
+                .into_owned();
+            let expected = if name == "LF" || name == "CR" || name == "CRLF" {
+                clean
+            } else {
+                stored.as_str()
+            };
+            assert_eq!(sent, expected, "{name}");
+            let code = crate::generate_curl::generate(&conn, doc.clone())
+                .unwrap()
+                .code;
+            assert_eq!(
+                crate::test_support::curl_payload(&code),
+                sent.as_bytes(),
+                "{name}"
+            );
+        }
+        assert_eq!(item(name)["request"]["body"]["raw"], stored, "{name}");
+        assert_eq!(
+            repo::get_request(&conn, &id).unwrap().body,
+            stored,
+            "{name}"
+        );
+    }
 }
 
 #[test]

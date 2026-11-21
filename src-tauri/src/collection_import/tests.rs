@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{CreateCollection, CreateRequest, SaveEnvironment};
+use crate::models::{CreateCollection, CreateRequest, KeyValue, RequestDoc, SaveEnvironment};
 use serde_json::{json, Value};
 
 fn collection(name: &str) -> Value {
@@ -599,7 +599,8 @@ fn removes_block_comments_but_preserves_strings_escapes_and_other_body_bytes() {
 #[test]
 fn comments_become_whitespace_without_merging_tokens_or_removing_line_endings() {
     let raw = "{\"n\":1/*日\r\ncomment*/2}\r\n";
-    let cleaned = raw_body::strip_block_comments(raw);
+    let cleaned =
+        crate::body_payload::strip_block_comments(raw, crate::body_payload::ScanRule::RawImport);
     assert_eq!(cleaned.removed_comments, 1);
     assert_eq!(cleaned.text.len(), raw.len());
     assert_eq!(
@@ -636,7 +637,10 @@ fn preserves_unclosed_comments_single_quoted_literals_and_line_comments() {
         .iter()
         .all(|warning| !warning.contains("PRIVATE_TAIL")));
     let literals = "'/*literal*/'\n// \" /*line comment stays*/\n{}/*remove*/";
-    let cleaned = raw_body::strip_block_comments(literals);
+    let cleaned = crate::body_payload::strip_block_comments(
+        literals,
+        crate::body_payload::ScanRule::RawImport,
+    );
     assert_eq!(
         cleaned.text,
         literals.replace("/*remove*/", &" ".repeat("/*remove*/".len()))
@@ -645,7 +649,11 @@ fn preserves_unclosed_comments_single_quoted_literals_and_line_comments() {
 }
 #[test]
 fn raw_body_limit_and_outer_file_validation_still_apply() {
-    let oversized = collection_with_raw_body(&"x".repeat(2 * 1024 * 1024 + 1));
+    let exact_body = "x".repeat(crate::body_payload::MAX_REQUEST_BODY_BYTES);
+    let exact = parsed(&collection_with_raw_body(&exact_body));
+    assert_eq!(exact.requests[0].body.as_bytes(), exact_body.as_bytes());
+    let oversized =
+        collection_with_raw_body(&"x".repeat(crate::body_payload::MAX_REQUEST_BODY_BYTES + 1));
     let error = import_error(&oversized);
     assert!(error.contains("Request \"Raw request\" > Body (raw)"));
     assert!(error.contains("limited to 2 MiB"));
@@ -670,6 +678,84 @@ fn commit_persists_raw_bytes_and_comment_cleanup_without_reading_external_files(
     assert_eq!(request.body, expected);
     assert_eq!(request.headers[0].value, "application/x-ndjson");
     assert_eq!(request.body_kind, "json");
+}
+
+#[test]
+fn imported_unfinished_raw_body_follows_effective_transport_media_type() {
+    let mut conn = connection();
+    let imports = Imports::default();
+    let raw = "{\"one\":1}/* unfinished PRIVATE_TAIL";
+    let bytes = serde_json::to_vec(&collection_with_raw_body(raw)).unwrap();
+    let preview = imports.stage(&bytes).unwrap();
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Unclosed block comment")));
+    let (_, workspace) = imported(
+        imports
+            .commit(&mut conn, input(preview.token, Mode::Create, None))
+            .unwrap(),
+    );
+    let mut doc = repo::get_request(&conn, &workspace.requests[0].id).unwrap();
+    assert_eq!(doc.body, raw);
+    assert_eq!(doc.body_kind, "json");
+    assert_eq!(doc.headers[0].value, "application/x-ndjson");
+
+    let json_error = |doc: &RequestDoc| {
+        let headers = crate::execution::http::headers(doc).unwrap();
+        crate::execution::http::json_payload(doc, &headers).unwrap_err()
+    };
+    // The imported explicit non-JSON header keeps the stored body verbatim.
+    let headers = crate::execution::http::headers(&doc).unwrap();
+    assert_eq!(
+        &*crate::execution::http::json_payload(&doc, &headers).unwrap(),
+        raw
+    );
+    let code = crate::generate_curl::generate(&conn, doc.clone())
+        .unwrap()
+        .code;
+    assert!(code.contains(raw));
+
+    // The default JSON header rejects the unfinished block before transport.
+    doc.headers.clear();
+    let error = json_error(&doc);
+    assert_eq!(error.code, "INVALID_INPUT");
+    assert!(error.message.contains("unclosed"));
+    assert!(!error.message.contains("PRIVATE_TAIL"));
+    assert_eq!(
+        crate::generate_curl::generate(&conn, doc.clone())
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+
+    // Explicit JSON also rejects; explicit text/plain preserves stored bytes.
+    doc.headers = vec![header("Content-Type", "application/json")];
+    assert_eq!(json_error(&doc).code, "INVALID_INPUT");
+    assert_eq!(
+        crate::generate_curl::generate(&conn, doc.clone())
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+    doc.headers = vec![header("Content-Type", "text/plain")];
+    let headers = crate::execution::http::headers(&doc).unwrap();
+    assert_eq!(
+        &*crate::execution::http::json_payload(&doc, &headers).unwrap(),
+        raw
+    );
+    let code = crate::generate_curl::generate(&conn, doc).unwrap().code;
+    assert!(code.contains(raw));
+}
+
+fn header(name: &str, value: &str) -> KeyValue {
+    KeyValue {
+        id: uuid::Uuid::new_v4().to_string(),
+        enabled: true,
+        name: name.into(),
+        value: value.into(),
+        description: String::new(),
+    }
 }
 
 #[test]

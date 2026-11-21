@@ -31,6 +31,7 @@ export function codeAppearance(dark: boolean) {
       },
       ".cm-content": { padding: "4px 0 24px", caretColor: "var(--text)" },
       ".cm-line": { padding: "0 4px" },
+      ".cm-comment": { color: "var(--syntax-comment)" },
       ".cm-gutters": {
         backgroundColor: "var(--bg)",
         color: "var(--code-gutter)",

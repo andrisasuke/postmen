@@ -433,10 +433,13 @@ impl Parsed {
                     "raw" => {
                         let body_location = format!("{location} > Body (raw)");
                         let raw = optional_string(&body["raw"]).map_err(|error| located(error, &body_location))?;
-                        if raw.len() > 2 * 1024 * 1024 {
+                        if raw.len() > crate::body_payload::MAX_REQUEST_BODY_BYTES {
                             return Err(located(AppError::new("LIMIT_EXCEEDED", "The saved request body is limited to 2 MiB."), &body_location));
                         }
-                        let cleaned = super::raw_body::strip_block_comments(raw);
+                        let cleaned = crate::body_payload::strip_block_comments(
+                            raw,
+                            crate::body_payload::ScanRule::RawImport,
+                        );
                         if cleaned.removed_comments != 0 {
                             warn(&mut self.warnings, format!("{body_location}: Removed {} block comment(s) /* ... */ outside strings. Whitespace and line endings were retained; other body content was not reformatted.", cleaned.removed_comments));
                         }
@@ -445,8 +448,9 @@ impl Parsed {
                         }
                         doc.body = cleaned.text;
                         if !doc.body.is_empty() {
-                            // The existing JSON editor stores/sends body text verbatim;
-                            // its linter is advisory. Do not reject or reformat raw data.
+                            // The editor keeps body text verbatim and its linter is
+                            // advisory. Native transport strips complete comments only
+                            // for JSON media types; do not reject or reformat raw data.
                             if let Err(error) = serde_json::from_str::<Value>(&doc.body) {
                                 warn(&mut self.warnings, format!("{body_location}: Not a single valid JSON document (line {}, column {}). Raw body imported without syntax repairs or reformatting, except removed block comments. Review the body and Content-Type before sending; the JSON editor may show lint warnings.", error.line(), error.column()));
                             }

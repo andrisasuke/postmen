@@ -1,6 +1,5 @@
 mod diagnostics;
 mod parser;
-mod raw_body;
 #[cfg(test)]
 mod tests;
 

@@ -1,4 +1,6 @@
 // Bound expansion BEFORE JSON.stringify allocates indentation for a deep tree.
+export const FORMAT_DEPTH_LIMIT = 64;
+export const FORMAT_OUTPUT_LIMIT = 2 * 1024 * 1024;
 export function formatResponse(
   body: string,
   truncated = false,
@@ -22,7 +24,7 @@ export function formatResponse(
     }
     if (character === "{" || character === "[") depth++;
     if ("{},[]:".includes(character)) estimate += 4 + Math.max(0, depth) * 4;
-    if (depth > 64 || estimate > 2 * 1024 * 1024)
+    if (depth > FORMAT_DEPTH_LIMIT || estimate > FORMAT_OUTPUT_LIMIT)
       return { body, json: false, limited: true };
     if (character === "}" || character === "]") depth--;
   }

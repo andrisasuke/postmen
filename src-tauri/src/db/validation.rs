@@ -1,4 +1,5 @@
 use crate::{
+    body_payload::MAX_REQUEST_BODY_BYTES,
     error::{AppError, AppResult},
     models::*,
 };
@@ -46,7 +47,7 @@ pub fn request(doc: &RequestDoc) -> AppResult<()> {
             "Invalid revision or URL (maximum 8192 bytes, no control characters).",
         ));
     }
-    if doc.body.len() > 2 * 1024 * 1024 {
+    if doc.body.len() > MAX_REQUEST_BODY_BYTES {
         return Err(AppError::new(
             "LIMIT_EXCEEDED",
             "The saved request body is limited to 2 MiB.",
