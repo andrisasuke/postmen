@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { defineAsyncComponent, defineComponent, h, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RequestDoc } from "../types/data";
 import { generateCurl } from "../services/generate-code";
 import { errorMessage } from "../services/data";
 import UiModal from "../components/ui/UiModal.vue";
 import IconButton from "../components/ui/IconButton.vue";
-import ShellPreview from "../components/editor/ShellPreview.vue";
 
 const props = defineProps<{ request: RequestDoc }>();
 const emit = defineEmits<{ close: [] }>();
@@ -15,7 +14,30 @@ const failure = ref("");
 const message = ref("");
 const copied = ref(false);
 const copying = ref(false);
-const preview = ref<InstanceType<typeof ShellPreview>>();
+const plainPreview = ref(false);
+// While the chunk loads, Vue assigns this ref to the loading placeholder
+// instance, so selectAll is only present once the real editor has mounted.
+const preview = ref<{ selectAll?: () => void }>();
+
+// ShellPreview pulls in CodeMirror and its theme; keep it out of the startup
+// bundle. The chunk is fetched only once generated code exists, and the dialog
+// stays usable while it loads or if it fails.
+const PreviewStatus = defineComponent({
+  name: "PreviewStatus",
+  setup: () => () => h("p", { class: "generate-code-preview-status", role: "status" }, "Loading preview…"),
+});
+const PreviewUnavailable = defineComponent({
+  name: "PreviewUnavailable",
+  setup: () => () => null,
+});
+const ShellPreviewAsync = defineAsyncComponent({
+  loader: () => import("../components/editor/ShellPreview.vue"),
+  loadingComponent: PreviewStatus,
+  errorComponent: PreviewUnavailable,
+  delay: 0,
+  onError: (_error, _retry, fail) => { plainPreview.value = true; fail(); },
+});
+
 let disposed = false;
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 function resetCopied() {
@@ -55,7 +77,8 @@ async function copy() {
     if (!disposed) {
       resetCopied();
       message.value = "Clipboard unavailable. Select the code and use Cmd/Ctrl+C.";
-      preview.value?.selectAll();
+      if (preview.value?.selectAll) preview.value.selectAll();
+      else plainPreview.value = true;
     }
   } finally {
     if (!disposed) copying.value = false;
@@ -67,7 +90,8 @@ async function copy() {
     <p v-if="loading" role="status">Generating cURL…</p>
     <p v-if="failure" class="inline-error" role="alert">{{ failure }}</p>
     <div class="generate-code-preview">
-      <ShellPreview v-if="code" ref="preview" :code="code" />
+      <ShellPreviewAsync v-if="code && !plainPreview" ref="preview" :code="code" />
+      <pre v-else-if="code" class="generate-code-plain" aria-label="Generated cURL code">{{ code }}</pre>
       <IconButton class="generate-code-copy" :class="{ 'generate-code-copied': copied }" label="Copy cURL" :icon="copied ? 'check' : 'copy'" :disabled="!code || copying" @click="copy" />
     </div>
     <span class="sr-only" role="status">{{ copied ? "Copied" : "" }}</span>
@@ -94,6 +118,8 @@ async function copy() {
 .generate-code-dialog .generate-code-copy.generate-code-copied,
 .generate-code-dialog .generate-code-copy.generate-code-copied:not(:disabled):hover { color: var(--toast-success); }
 .generate-code-dialog p { margin: 0; flex-shrink: 0; }
+.generate-code-dialog .generate-code-preview-status { color: var(--muted); }
+.generate-code-dialog .generate-code-plain { margin: 0; height: 100%; padding-right: 44px; overflow: auto; font-family: var(--font-code); color: var(--text); user-select: text; }
 .generate-code-dialog .shell-preview { height: 100%; padding-right: 44px; }
 /* Override shared CodeMirror surfaces only here. Opaque gutters still cover
    horizontally scrolled code, using the same background as the dialog. */

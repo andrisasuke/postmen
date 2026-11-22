@@ -51,6 +51,7 @@
   --syntax-string: hsl(28 55% 38%);
   --syntax-atom: hsl(352 45% 50%);
   --syntax-number: hsl(328 50% 48%);
+  --syntax-comment: hsl(0 0% 52%);
   --status-text: #646464;
   --code-text: #000;
   --code-gutter: #999;
@@ -93,6 +94,7 @@
   --syntax-string: hsl(35 65% 72%);
   --syntax-atom: hsl(367 84% 70%);
   --syntax-number: hsl(305 59% 74%);
+  --syntax-comment: hsl(0 0% 64%);
   --status-text: #a9a9a9;
   --code-text: #f8f8f2;
   --code-gutter: #d0d0d0;

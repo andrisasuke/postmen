@@ -1,4 +1,5 @@
 use crate::{
+    body_payload,
     db::{environments, repository as repo, validation},
     error::{AppError, AppResult},
     models::{Folder, KeyValue, RequestDoc},
@@ -9,6 +10,19 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 const SCHEMA: &str = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
+
+fn has_valid_placeholder(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(start) = rest.find("<<") {
+        rest = &rest[start + 2..];
+        if let Some(end) = rest.find(">>") {
+            if environments::variable_name(&rest[..end]) {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 fn placeholders(text: &str) -> String {
     let mut result = String::new();
@@ -54,6 +68,48 @@ fn decode_query(text: &str) -> AppResult<String> {
     String::from_utf8(bytes).map_err(|_| {
         AppError::invalid("A URL query is not valid UTF-8. Fix the saved URL before exporting.")
     })
+}
+
+fn export_json_body(doc: &RequestDoc) -> Option<String> {
+    if doc.body_kind != "json" {
+        return None;
+    }
+    let active: Vec<&KeyValue> = doc
+        .headers
+        .iter()
+        .filter(|header| header.enabled && !header.name.is_empty())
+        .collect();
+    // A dynamic active header name could resolve into a second Content-Type,
+    // and an unresolved media-type value cannot prove the effective MIME type.
+    if active
+        .iter()
+        .any(|header| has_valid_placeholder(&header.name))
+    {
+        return None;
+    }
+    let content_types: Vec<&KeyValue> = active
+        .iter()
+        .copied()
+        .filter(|header| header.name.eq_ignore_ascii_case("content-type"))
+        .collect();
+    let media = match content_types.as_slice() {
+        [] => body_payload::JsonMediaType::Json,
+        [header] => {
+            if has_valid_placeholder(&header.value) {
+                body_payload::JsonMediaType::Ambiguous
+            } else {
+                body_payload::json_media_type(header.value.as_bytes())
+            }
+        }
+        _ => body_payload::JsonMediaType::Ambiguous,
+    };
+    if media != body_payload::JsonMediaType::Json {
+        return None;
+    }
+    match body_payload::clean_json_body(&doc.body, body_payload::JsonCleanupPolicy::Export) {
+        body_payload::JsonCleanupBody::Formatted(text) => Some(text),
+        _ => None,
+    }
 }
 
 fn request(doc: &RequestDoc, warnings: &mut BTreeSet<String>) -> AppResult<Value> {
@@ -147,8 +203,9 @@ fn request(doc: &RequestDoc, warnings: &mut BTreeSet<String>) -> AppResult<Value
     });
     match doc.body_kind.as_str() {
         "json" => {
+            let raw = export_json_body(doc).unwrap_or_else(|| doc.body.clone());
             result["body"] =
-                json!({"mode":"raw", "raw":doc.body, "options":{"raw":{"language":"json"}}});
+                json!({"mode":"raw", "raw":raw, "options":{"raw":{"language":"json"}}});
             if !doc
                 .headers
                 .iter()

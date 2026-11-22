@@ -1,3 +1,4 @@
+mod body_payload;
 mod collection_export;
 mod collection_import;
 mod commands;
@@ -14,6 +15,8 @@ mod models;
 #[cfg(all(feature = "native-smoke", target_os = "macos"))]
 mod native_smoke;
 mod storage_profile;
+#[cfg(test)]
+mod test_support;
 mod workspaces;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},

@@ -1,5 +1,6 @@
 use super::models::{ExecutionResult, ResponseHeader};
 use crate::{
+    body_payload,
     db::{repository as repo, Database},
     error::{AppError, AppResult},
     models::RequestDoc,
@@ -8,7 +9,7 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE},
     Client, Method, Url,
 };
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, time::Duration};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 
@@ -125,6 +126,31 @@ pub fn headers(doc: &RequestDoc) -> AppResult<HeaderMap> {
     }
     Ok(headers)
 }
+// The UI keeps comments in the saved and visible draft. Deterministic JSON media
+// types clean a transport copy; ambiguous or non-JSON values preserve raw bytes.
+pub fn json_payload<'a>(doc: &'a RequestDoc, headers: &HeaderMap) -> AppResult<Cow<'a, str>> {
+    let values: Vec<&HeaderValue> = headers.get_all(CONTENT_TYPE).iter().collect();
+    let media = match values.as_slice() {
+        [] => body_payload::JsonMediaType::Json,
+        [value] => body_payload::json_media_type(value.as_bytes()),
+        _ => body_payload::JsonMediaType::Ambiguous,
+    };
+    if media != body_payload::JsonMediaType::Json || !body_payload::needs_json_cleanup(&doc.body) {
+        return Ok(Cow::Borrowed(&doc.body));
+    }
+    match body_payload::clean_json_body(
+        &doc.body,
+        body_payload::JsonCleanupPolicy::Transport,
+    ) {
+        body_payload::JsonCleanupBody::NotTriggered => Ok(Cow::Borrowed(&doc.body)),
+        body_payload::JsonCleanupBody::Formatted(text)
+        | body_payload::JsonCleanupBody::Masked(text) => Ok(Cow::Owned(text)),
+        body_payload::JsonCleanupBody::Unterminated => Err(AppError::invalid(
+            "The JSON body contains an unclosed /* block comment. Close it with */ or remove it before sending.",
+        )),
+        body_payload::JsonCleanupBody::Invalid => Ok(Cow::Borrowed(&doc.body)),
+    }
+}
 pub(super) fn is_tls_error(error: &(dyn std::error::Error + 'static), depth: usize) -> bool {
     if depth > 16 {
         return false;
@@ -219,15 +245,21 @@ pub async fn send(
         )
     })??;
     let url = compose_url(&doc)?;
+    let headers = headers(&doc)?;
+    let payload = if doc.body_kind == "json" {
+        Some(json_payload(&doc, &headers)?.into_owned())
+    } else {
+        None
+    };
     let mut builder = client
         .request(
             Method::from_bytes(doc.method.as_bytes())
                 .map_err(|_| AppError::invalid("Invalid method."))?,
             url,
         )
-        .headers(headers(&doc)?);
-    if doc.body_kind == "json" {
-        builder = builder.body(doc.body.clone());
+        .headers(headers);
+    if let Some(payload) = payload {
+        builder = builder.body(payload);
     }
     if doc.body_kind == "multipart" {
         let files: HashMap<String, PathBuf> = files.into_iter().collect();

@@ -1,5 +1,9 @@
 use super::*;
-use crate::{db::Database, models::*};
+use crate::{
+    db::Database,
+    models::*,
+    test_support::{arguments, curl_payload, curl_payload_result, printf_chunks},
+};
 
 fn row(name: &str, value: &str) -> KeyValue {
     KeyValue {
@@ -68,42 +72,7 @@ fn environment(conn: &mut Connection, collection_id: Option<String>, variables: 
     .unwrap();
 }
 
-// Decode the subset of POSIX word syntax emitted by the generator in memory.
-// Never start a shell or execute the generated command in tests.
-fn arguments(code: &str) -> Vec<String> {
-    let mut chars = code.chars().peekable();
-    let mut quoted = false;
-    let mut started = false;
-    let mut word = String::new();
-    let mut result = vec![];
-    while let Some(c) = chars.next() {
-        if c == '\'' {
-            quoted = !quoted;
-            started = true;
-        } else if quoted {
-            word.push(c);
-        } else if c == '\\' {
-            let next = chars.next().expect("complete escape");
-            if next != '\n' {
-                word.push(next);
-                started = true;
-            }
-        } else if c.is_whitespace() {
-            if started {
-                result.push(std::mem::take(&mut word));
-                started = false;
-            }
-        } else {
-            word.push(c);
-            started = true;
-        }
-    }
-    assert!(!quoted, "balanced POSIX quotes");
-    if started {
-        result.push(word);
-    }
-    result
-}
+// Decoder is shared with Send parity tests through test_support.
 
 #[test]
 fn exports_all_methods_and_head_without_body() {
@@ -178,7 +147,7 @@ fn retains_raw_json_whitespace_newlines_apostrophes_and_shell_literals() {
     fixture(|conn, mut doc| {
         doc.body_kind = "json".into();
         for body in [
-            " \n{\"name\": \"O'Reilly 日本語\"}\n  ",
+            "\n{\"name\": \"O'Reilly 日本語\"}\n",
             "@file\n$(secret) `command` \\\n raw",
             "raw\r\nCRLF\rstandalone carriage return",
             "",
@@ -188,6 +157,197 @@ fn retains_raw_json_whitespace_newlines_apostrophes_and_shell_literals() {
             assert_eq!(args[args.len() - 2], "--data-raw");
             assert_eq!(args.last().unwrap(), body);
         }
+        doc.body = "{\n  \n  \"a\":1\n}".into();
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), "{\n  \"a\": 1\n}");
+    });
+}
+
+#[test]
+fn json_comment_payload_uses_same_media_type_policy_as_send() {
+    fixture(|conn, mut doc| {
+        doc.body_kind = "json".into();
+        let raw = "{\n  /* old\n     payload */\n  \"name\": /* note */ \"test/* */\",\n  \"amount\":1e+400,\"amount\":9007199254740993\n}";
+        let formatted = "{\n  \"name\": \"test/* */\",\n  \"amount\": 1e+400,\n  \"amount\": 9007199254740993\n}";
+        doc.body = raw.into();
+        // No Content-Type follows the existing JSON default.
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args[args.len() - 2], "--data-raw");
+        assert_eq!(args.last().unwrap(), formatted);
+        assert!(args.last().unwrap().contains("\"test/* */\""));
+        // Structured JSON suffixes with parameters are still JSON.
+        doc.headers = vec![row(
+            "Content-Type",
+            "application/vnd.api+json; charset=utf-8",
+        )];
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), formatted);
+        // Non-ASCII quoted parameters do not affect the media type decision.
+        doc.headers = vec![row("Content-Type", "application/json; profile=\"café\"")];
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), formatted);
+        // Explicit raw media types preserve the body byte for byte.
+        doc.headers = vec![row("Content-Type", "text/plain")];
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), raw);
+        // A malformed media type is not the structured +json suffix.
+        doc.headers = vec![row("Content-Type", "foo+json")];
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), raw);
+        // A valid structured suffix is JSON even when type is not application.
+        doc.headers = vec![row("Content-Type", "text/plain+json; profile=\"café\"")];
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        assert_eq!(args.last().unwrap(), formatted);
+        // JSON request rules recognize markers after single quotes and // text.
+        doc.headers = vec![row("Content-Type", "application/json")];
+        doc.body = "'/* single */' // /* line */\n{\"a\":1}/* tail */".into();
+        let args = arguments(&generate(conn, doc.clone()).unwrap().code);
+        let payload = args.last().unwrap();
+        assert!(!payload.contains("/* single */"));
+        assert!(!payload.contains("/* line */"));
+        assert!(!payload.contains("/* tail */"));
+        // Unclosed comments are rejected instead of exporting a partial body.
+        for body in [
+            "{\"a\":1}/* unfinished PRIVATE_TAIL",
+            "'/* unfinished PRIVATE_TAIL",
+            "// /* unfinished PRIVATE_TAIL",
+            "{\"a\":\"bad\\\n/* unfinished PRIVATE_TAIL",
+            "{\"a\":\"bad\\\r\n/* unfinished PRIVATE_TAIL",
+        ] {
+            doc.body = body.into();
+            let error = generate(conn, doc.clone()).unwrap_err();
+            assert_eq!(error.code, "INVALID_INPUT");
+            assert!(error.message.contains("unclosed"));
+            assert!(!error.message.contains("PRIVATE_TAIL"));
+        }
+    });
+}
+
+#[test]
+fn streams_payloads_at_or_above_64_kib_through_stdin() {
+    fixture(|conn, mut doc| {
+        doc.body_kind = "json".into();
+        doc.headers = vec![row("Content-Type", "text/plain")];
+        for length in [64 * 1024 - 1, 64 * 1024, 64 * 1024 + 1] {
+            let body = "x".repeat(length);
+            doc.body = body.clone();
+            let code = generate(conn, doc.clone()).unwrap().code;
+            if length < 64 * 1024 {
+                assert_eq!(
+                    arguments(&code).iter().rev().nth(1).map(String::as_str),
+                    Some("--data-raw")
+                );
+            } else {
+                assert!(code.contains("--data-binary '@-'"));
+                assert!(!code.contains("--data-raw"));
+                assert!(code.contains("printf '%s' "));
+                assert!(!code.contains("printf '%s\\n'"));
+            }
+            assert_eq!(curl_payload(&code), body.as_bytes(), "{length}");
+        }
+    });
+}
+
+#[test]
+fn streams_formatted_json_by_payload_size_not_source_size() {
+    fixture(|conn, mut doc| {
+        doc.body_kind = "json".into();
+        let body = format!(
+            "/* note */{}{}0{}",
+            "[".repeat(64),
+            "0,".repeat(1000),
+            "]".repeat(64)
+        );
+        assert!(body.len() < 64 * 1024);
+        doc.body = body;
+        doc.headers = vec![row("Content-Type", "application/json")];
+        let headers = crate::execution::http::headers(&doc).unwrap();
+        let expected = crate::execution::http::json_payload(&doc, &headers)
+            .unwrap()
+            .into_owned();
+        assert!(expected.len() >= 64 * 1024);
+        let code = generate(conn, doc).unwrap().code;
+        assert!(code.contains("--data-binary '@-'"));
+        assert_eq!(curl_payload(&code), expected.as_bytes());
+        assert!(printf_chunks(&code)
+            .unwrap()
+            .iter()
+            .all(|chunk| chunk.as_bytes().len() <= 32 * 1024));
+    });
+}
+
+#[test]
+fn streams_large_review_array_raw_apostrophes_and_multibyte_chunks() {
+    fixture(|conn, mut doc| {
+        doc.body_kind = "json".into();
+        let large_array = format!("/* note */[{}0]", "0,".repeat(250_000));
+        doc.body = large_array;
+        doc.headers = vec![row("Content-Type", "application/json")];
+        let headers = crate::execution::http::headers(&doc).unwrap();
+        let expected = crate::execution::http::json_payload(&doc, &headers)
+            .unwrap()
+            .into_owned();
+        assert!(expected.len() > 1_000_000);
+        let code = generate(conn, doc.clone()).unwrap().code;
+        assert!(code.contains("--data-binary '@-'"));
+        assert_eq!(curl_payload(&code), expected.as_bytes());
+
+        let raw = format!(
+            "  O'Reilly\r\n\"$(command)\" `tick` 日本語😀\n{}\n",
+            "x".repeat(70_000)
+        );
+        doc.body = raw.clone();
+        doc.headers = vec![row("Content-Type", "text/plain")];
+        let code = generate(conn, doc.clone()).unwrap().code;
+        assert!(code.contains("--data-binary '@-'"));
+        assert_eq!(curl_payload(&code), raw.as_bytes());
+        assert!(printf_chunks(&code).unwrap().iter().all(|chunk| {
+            chunk.as_bytes().len() <= 32 * 1024 && std::str::from_utf8(chunk.as_bytes()).is_ok()
+        }));
+
+        let json = format!(
+            "/* note */{{\"author\":\"O'Reilly\",\"text\":\"{}\"}}",
+            "日".repeat(30_000)
+        );
+        doc.body = json;
+        doc.headers = vec![row("Content-Type", "application/json")];
+        let headers = crate::execution::http::headers(&doc).unwrap();
+        let expected = crate::execution::http::json_payload(&doc, &headers)
+            .unwrap()
+            .into_owned();
+        let code = generate(conn, doc).unwrap().code;
+        assert!(code.contains("--data-binary '@-'"));
+        assert_eq!(curl_payload(&code), expected.as_bytes());
+        assert!(printf_chunks(&code)
+            .unwrap()
+            .iter()
+            .all(|chunk| chunk.as_bytes().len() <= 32 * 1024));
+    });
+}
+#[test]
+fn strict_stdin_decoder_rejects_extra_commands_and_missing_chunks() {
+    fixture(|conn, mut doc| {
+        doc.body_kind = "json".into();
+        let raw = format!(
+            "printf '%s' --data-raw --data-binary @- }} | curl O'Reilly {}",
+            "x".repeat(70_000)
+        );
+        doc.body = raw.clone();
+        doc.headers = vec![row("Content-Type", "text/plain")];
+        let code = generate(conn, doc).unwrap().code;
+        assert_eq!(curl_payload(&code), raw.as_bytes());
+        assert!(!raw.ends_with('\n'));
+
+        let extra_newline = code.replacen("  printf '%s' ", "  printf '\\n'\n  printf '%s' ", 1);
+        assert!(curl_payload_result(&extra_newline).is_err());
+        let echo = code.replacen("  printf '%s' ", "  echo synthetic\n  printf '%s' ", 1);
+        assert!(curl_payload_result(&echo).is_err());
+
+        let first_command = code.lines().nth(1).expect("first printf command");
+        let missing_chunk = code.replacen(first_command, "", 1);
+        let decoded = curl_payload(&missing_chunk);
+        assert_ne!(decoded, raw.as_bytes());
+        assert!(decoded.len() < raw.len());
     });
 }
 

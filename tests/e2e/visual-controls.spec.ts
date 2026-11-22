@@ -1,5 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { menuAction, select } from "./controls";
+
+async function expectEditorLines(editor: Locator, lines: string[]) {
+  await expect.poll(() => editor.locator(".cm-line").count()).toBe(lines.length);
+  for (let index = 0; index < lines.length; index++)
+    await expect
+      .poll(() => editor.locator(".cm-line").nth(index).textContent())
+      .toBe(lines[index]);
+}
 test.beforeEach(async ({ page }) => {
   await page.goto("/?fixture=visual");
   await page
@@ -64,6 +72,112 @@ test("fold/unfold and bounded Prettify preserve editable request; response stays
   await expect(response.locator(".cm-foldPlaceholder")).toBeVisible();
   await menuAction(page, "Response actions", "Unfold response");
   await expect(response).toContainText("Alex Morgan");
+});
+test("block comments format, undo, save and reopen without hiding string markers", async ({
+  page,
+}) => {
+  const editor = page.getByTestId("json-editor-input");
+  const draft = `{"a":/* first */1,
+"b":"test/* */",/* second */"n":3}`;
+  const brokenDraft = `{"a":/* first */1
+"b":"test/* */",/* second */"n":3}`;
+  const lintMarkers = editor.locator(
+    ".cm-lintRange-error, .cm-lintPoint-error",
+  );
+  await editor.fill(brokenDraft);
+  await expect(lintMarkers.first()).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+Home");
+  await page.keyboard.press("End");
+  await page.keyboard.insertText(",");
+  await expect(lintMarkers).toHaveCount(0);
+  await expectEditorLines(editor, draft.split("\n"));
+  await expect(editor.locator(".cm-comment").first()).toBeVisible();
+  await expect
+    .poll(async () => (await editor.locator(".cm-comment").allTextContents()).join(""))
+    .toContain("/* first */");
+  expect((await editor.locator(".cm-comment").allTextContents()).join("")).toContain(
+    "/* second */",
+  );
+  expect((await editor.locator(".cm-comment").allTextContents()).join("")).not.toContain(
+    "test/* */",
+  );
+
+  const setTheme = async (theme: string) => {
+    await page
+      .getByRole("button", { name: "Change theme", exact: true })
+      .click();
+    await page.getByRole("menuitemradio", { name: theme, exact: true }).click();
+    await expect(editor.locator(".cm-comment").first()).toBeVisible();
+  };
+  const commentColor = () =>
+    editor
+      .locator(".cm-comment")
+      .first()
+      .evaluate((element) => getComputedStyle(element).color);
+  await setTheme("Light");
+  const light = await commentColor();
+  await setTheme("Dark");
+  const dark = await commentColor();
+  expect(dark).not.toBe(light);
+  const gray = (color: string) => {
+    const channels = (color.match(/\d+/g) ?? []).map(Number);
+    return (
+      channels.length >= 3 &&
+      channels[0] === channels[1] &&
+      channels[1] === channels[2]
+    );
+  };
+  expect(gray(light)).toBe(true);
+  expect(gray(dark)).toBe(true);
+  await setTheme("Light");
+  expect(await commentColor()).toBe(light);
+
+  await page.getByRole("button", { name: "Format JSON", exact: true }).click();
+  await expect
+    .poll(async () => (await editor.locator(".cm-line").allTextContents()).join("\n"))
+    .not.toBe(draft);
+  const formatted = (await editor.locator(".cm-line").allTextContents()).join("\n");
+  expect(formatted.split("\n").length).toBeGreaterThan(draft.split("\n").length);
+  expect(formatted).toContain('"a": /* first */ 1');
+  expect(formatted).toContain('"b": "test/* */"');
+  expect(formatted.indexOf("/* first */")).toBeLessThan(
+    formatted.indexOf("/* second */"),
+  );
+  await expect(editor.locator(".cm-comment").first()).toBeVisible();
+  const formattedComments = (
+    await editor.locator(".cm-comment").allTextContents()
+  ).join("");
+  expect(formattedComments).toContain("/* first */");
+  expect(formattedComments).toContain("/* second */");
+  expect(formattedComments).not.toContain("test/* */");
+  await expect(editor.locator(".cm-lintRange-error")).toHaveCount(0);
+
+  await menuAction(page, "JSON editor actions", "Undo JSON edit");
+  await expectEditorLines(editor, draft.split("\n"));
+  await page.getByRole("button", { name: "Save request", exact: true }).click();
+  await expect(
+    page
+      .getByRole("tablist", { name: "Open requests" })
+      .getByLabel("Unsaved changes"),
+  ).toHaveCount(0);
+  await page.keyboard.press("Control+w");
+  await expect(
+    page.getByRole("tab", { name: "POST Create user", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByTestId("sidebar")
+    .getByRole("button", { name: "POST Create user", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Body", exact: true }).click();
+  await expectEditorLines(editor, draft.split("\n"));
+  await expect(editor.locator(".cm-comment").first()).toBeVisible();
+  const reopenedComments = (
+    await editor.locator(".cm-comment").allTextContents()
+  ).join("");
+  expect(reopenedComments).toContain("/* first */");
+  expect(reopenedComments).toContain("/* second */");
+  expect(reopenedComments).not.toContain("test/* */");
+  await expect(editor).toContainText('"test/* */"');
 });
 test("minimum window lets users reach response, menus and file fields", async ({
   page,

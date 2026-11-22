@@ -2,6 +2,7 @@ use super::{http, models::*, Executions};
 use crate::{
     db::{repository as repo, Database},
     models::*,
+    test_support::curl_payload,
 };
 use std::{
     io::Write,
@@ -199,6 +200,11 @@ fn row(name: &str, value: &str) -> KeyValue {
         value: value.into(),
         description: String::new(),
     }
+}
+fn sent_body(sent: &str) -> &str {
+    sent.split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or_default()
 }
 
 #[test]
@@ -428,6 +434,419 @@ async fn duplicate_headers_and_duration_include_body() {
             .count(),
         2
     );
+}
+#[test]
+fn json_payload_strips_complete_comments_only_for_json_media_types() {
+    let (_dir, _db, mut doc) = fixture();
+    doc.body_kind = "json".into();
+    let raw = "{\n  /*\n  \"old\": 0\n  */\n  \"name\": \"test/* */\",\n  \"n\": 1/* note */2\n}";
+    doc.body = raw.into();
+    doc.headers = vec![row(
+        "Content-Type",
+        "Application/Vnd.Api+Json; profile=\"café\"",
+    )];
+    let payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert!(!payload.contains("\"old\": 0"));
+    assert!(payload.contains("\"name\": \"test/* */\""));
+    assert!(!payload.contains("12"));
+    assert_eq!(payload.len(), raw.len());
+    assert_eq!(
+        payload
+            .bytes()
+            .filter(|byte| matches!(byte, b'\r' | b'\n'))
+            .collect::<Vec<_>>(),
+        raw.bytes()
+            .filter(|byte| matches!(byte, b'\r' | b'\n'))
+            .collect::<Vec<_>>()
+    );
+    // No explicit header: headers() supplies the existing JSON default.
+    doc.headers.clear();
+    let default_payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert_eq!(default_payload, payload);
+    // Legacy comment padding without a marker is cleaned for the payload copy.
+    doc.body = "{\n  \n  \"a\":1\n}".into();
+    let headers = http::headers(&doc).unwrap();
+    assert_eq!(
+        &*http::json_payload(&doc, &headers).unwrap(),
+        "{\n  \"a\": 1\n}"
+    );
+    doc.body = raw.into();
+    // Explicit non-JSON media types keep every raw byte, comments included.
+    doc.headers = vec![row("Content-Type", "text/plain; charset=utf-8")];
+    let raw_payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert_eq!(raw_payload, raw);
+    // A malformed media type is not the structured +json suffix.
+    doc.headers = vec![row("Content-Type", "foo+json")];
+    let foo_payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert_eq!(foo_payload, raw);
+    // A valid structured suffix is JSON even when type is not application.
+    doc.headers = vec![row("Content-Type", "text/plain+json; profile=\"café\"")];
+    let structured_payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert_eq!(structured_payload, payload);
+    // Multiple active values are ambiguous even when identical; order cannot
+    // decide whether the raw or cleaned copy is sent.
+    for headers in [
+        vec![
+            row("Content-Type", "application/json"),
+            row("Content-Type", "text/plain"),
+        ],
+        vec![
+            row("Content-Type", "text/plain"),
+            row("Content-Type", "application/json"),
+        ],
+        vec![
+            row("Content-Type", "application/json"),
+            row("Content-Type", "application/json"),
+        ],
+        vec![row("Content-Type", "application/json, text/plain")],
+    ] {
+        doc.headers = headers;
+        let ambiguous = {
+            let headers = http::headers(&doc).unwrap();
+            http::json_payload(&doc, &headers).unwrap().into_owned()
+        };
+        assert_eq!(ambiguous, raw);
+    }
+    let mut disabled = row("Content-Type", "text/plain");
+    disabled.enabled = false;
+    doc.headers = vec![row("Content-Type", "application/json"), disabled];
+    let active_only = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert_eq!(active_only, payload);
+    // JSON request rules recognize markers after single quotes and // text.
+    doc.headers = vec![row("Content-Type", "application/json")];
+    doc.body = "'/* single */' // /* line */\n{\"a\":1}/* tail */".into();
+    let payload = {
+        let headers = http::headers(&doc).unwrap();
+        http::json_payload(&doc, &headers).unwrap().into_owned()
+    };
+    assert!(!payload.contains("/* single */"));
+    assert!(!payload.contains("/* line */"));
+    assert!(!payload.contains("/* tail */"));
+    // Unclosed blocks outside JSON strings fail before any transport body.
+    for body in [
+        "{\"a\":1}/* unfinished PRIVATE_TAIL",
+        "'/* unfinished PRIVATE_TAIL",
+        "// /* unfinished PRIVATE_TAIL",
+    ] {
+        doc.body = body.into();
+        let headers = http::headers(&doc).unwrap();
+        let error = http::json_payload(&doc, &headers).unwrap_err();
+        assert_eq!(error.code, "INVALID_INPUT");
+        assert!(error.message.contains("unclosed"));
+        assert!(!error.message.contains("PRIVATE_TAIL"));
+    }
+}
+#[tokio::test]
+async fn imported_unfinished_body_is_rejected_or_verbatim_by_effective_media_type() {
+    let server = server().await;
+    let (_dir, db, _) = fixture();
+    let imports = crate::collection_import::Imports::default();
+    let raw = "{\"one\":1}/* unfinished PRIVATE_TAIL";
+    let collection = serde_json::json!({
+        "info": {"name": "Imported raw", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "Raw request", "request": {
+            "method": "POST",
+            "url": "https://example.test/raw",
+            "body": {"mode": "raw", "raw": raw}
+        }}]
+    });
+    let bytes = serde_json::to_vec(&collection).unwrap();
+    let preview = imports.stage(&bytes).unwrap();
+    let token = serde_json::to_value(&preview).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let outcome = db
+        .run(|conn| {
+            imports.commit(
+                conn,
+                crate::collection_import::Commit {
+                    token,
+                    mode: crate::collection_import::Mode::Create,
+                    target_id: None,
+                },
+            )
+        })
+        .unwrap();
+    let workspace = match outcome {
+        crate::collection_import::Outcome::Imported { workspace, .. } => workspace,
+        _ => panic!("expected import"),
+    };
+    let request_id = workspace
+        .requests
+        .iter()
+        .find(|request| request.name == "Raw request")
+        .unwrap()
+        .id
+        .clone();
+    let mut doc = db.run(|conn| repo::get_request(conn, &request_id)).unwrap();
+    assert_eq!(doc.body, raw);
+    assert_eq!(doc.body_kind, "json");
+    doc.url = format!("{}/json", server.url);
+    doc.method = "POST".into();
+    let ex = Executions::new().unwrap();
+
+    // Default JSON rejects the unfinished block before HTTP.
+    let result = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, "error");
+    assert_eq!(result.error_code.as_deref(), Some("INVALID_INPUT"));
+    assert_eq!(server.requests.lock().unwrap().len(), 0);
+
+    // Explicit JSON also rejects, and Generate cURL returns the same error.
+    doc.headers = vec![row("Content-Type", "application/json")];
+    let result = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, "error");
+    assert_eq!(result.error_code.as_deref(), Some("INVALID_INPUT"));
+    assert_eq!(server.requests.lock().unwrap().len(), 0);
+    assert_eq!(
+        db.run(|conn| crate::generate_curl::generate(conn, doc.clone()))
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+
+    // Explicit text/plain sends the stored bytes and matches cURL arguments.
+    doc.headers = vec![row("Content-Type", "text/plain")];
+    let result = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.status, Some(200));
+    {
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(sent_body(&requests[0]), raw);
+    }
+    let code = db
+        .run(|conn| crate::generate_curl::generate(conn, doc))
+        .unwrap()
+        .code;
+    assert!(code.contains(raw));
+}
+
+#[tokio::test]
+async fn send_records_same_payload_as_generate_curl_for_effective_media_types() {
+    let server = server().await;
+    let (_dir, db, mut doc) = fixture();
+    doc.method = "POST".into();
+    doc.url = format!("{}/json", server.url);
+    doc.body_kind = "json".into();
+    let raw =
+        "{\n  /* old */\n  \"name\": \"test/* */\",\n  \"author\": \"O'Reilly\",\n  \"n\": 1\n}";
+    let formatted = "{\n  \"name\": \"test/* */\",\n  \"author\": \"O'Reilly\",\n  \"n\": 1\n}";
+    let cases: [(Option<&str>, &str); 5] = [
+        (None, formatted),
+        (Some("application/json; profile=\"café\""), formatted),
+        (
+            Some("application/vnd.api+json; profile=\"café\""),
+            formatted,
+        ),
+        (Some("text/plain"), raw),
+        (Some("foo+json"), raw),
+    ];
+    let ex = Executions::new().unwrap();
+    for (index, (content_type, expected)) in cases.into_iter().enumerate() {
+        doc.body = raw.into();
+        doc.headers = match content_type {
+            Some(value) => vec![row("Content-Type", value)],
+            None => vec![],
+        };
+        let result = ex
+            .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.status, Some(200), "{content_type:?}");
+        let sent = {
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), index + 1);
+            sent_body(&requests[index]).to_owned()
+        };
+        let code = db
+            .run(|conn| crate::generate_curl::generate(conn, doc.clone()))
+            .unwrap()
+            .code;
+        assert_eq!(curl_payload(&code), sent.as_bytes(), "{content_type:?}");
+        assert_eq!(sent.as_str(), expected, "{content_type:?}");
+    }
+
+    let large = format!(
+        "/* note */{{\"author\":\"O'Reilly\",\"text\":\"{}\"}}",
+        "日".repeat(30_000)
+    );
+    doc.body = large;
+    doc.headers = vec![row("Content-Type", "application/json")];
+    let result = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.status, Some(200));
+    let sent = {
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 6);
+        sent_body(&requests[5]).as_bytes().to_vec()
+    };
+    let code = db
+        .run(|conn| crate::generate_curl::generate(conn, doc))
+        .unwrap()
+        .code;
+    assert!(code.contains("--data-binary '@-'"));
+    assert_eq!(curl_payload(&code), sent);
+    assert!(sent
+        .windows(b"O'Reilly".len())
+        .any(|window| window == b"O'Reilly"));
+}
+
+#[tokio::test]
+async fn conflicting_content_types_preserve_raw_send_and_curl_bytes() {
+    let server = server().await;
+    let (_dir, db, mut doc) = fixture();
+    doc.method = "POST".into();
+    doc.url = format!("{}/json", server.url);
+    doc.body_kind = "json".into();
+    let raw = "{\n  /* old */\n  \"name\": \"test/* */\",\n  \"author\": \"O'Reilly\"\n}";
+    let formatted = "{\n  \"name\": \"test/* */\",\n  \"author\": \"O'Reilly\"\n}";
+    let mut disabled_text = row("Content-Type", "text/plain");
+    disabled_text.enabled = false;
+    let cases: [(Vec<KeyValue>, &str, usize); 5] = [
+        (
+            vec![
+                row("Content-Type", "application/json"),
+                row("Content-Type", "text/plain"),
+            ],
+            raw,
+            2,
+        ),
+        (
+            vec![
+                row("Content-Type", "text/plain"),
+                row("Content-Type", "application/json"),
+            ],
+            raw,
+            2,
+        ),
+        (
+            vec![
+                row("Content-Type", "application/json"),
+                row("Content-Type", "application/json"),
+            ],
+            raw,
+            2,
+        ),
+        (
+            vec![row("Content-Type", "application/json, text/plain")],
+            raw,
+            1,
+        ),
+        (
+            vec![row("Content-Type", "application/json"), disabled_text],
+            formatted,
+            1,
+        ),
+    ];
+    let ex = Executions::new().unwrap();
+    for (index, (headers, expected, active_count)) in cases.into_iter().enumerate() {
+        doc.body = raw.into();
+        doc.headers = headers;
+        let result = ex
+            .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.status, Some(200), "{index}");
+        let (sent, recorded) = {
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), index + 1);
+            (
+                sent_body(&requests[index]).as_bytes().to_vec(),
+                requests[index].clone(),
+            )
+        };
+        assert_eq!(
+            recorded
+                .to_ascii_lowercase()
+                .matches("content-type:")
+                .count(),
+            active_count,
+            "{index}"
+        );
+        let code = db
+            .run(|conn| crate::generate_curl::generate(conn, doc.clone()))
+            .unwrap()
+            .code;
+        assert_eq!(curl_payload(&code), sent, "{index}");
+        assert_eq!(sent.as_slice(), expected.as_bytes(), "{index}");
+    }
+}
+
+#[tokio::test]
+async fn send_uses_draft_comment_payload_without_modifying_the_saved_request() {
+    let server = server().await;
+    let (_dir, db, mut doc) = fixture();
+    doc.method = "POST".into();
+    doc.url = format!("{}/json", server.url);
+    doc.body_kind = "json".into();
+    let draft = "{\n  /*\n  \"old\": true\n  */\n  \"name\": \"test/* */\",\n  \"active\": 1\n}";
+    doc.body = draft.into();
+    doc.headers = vec![row("Content-Type", "application/json; charset=utf-8")];
+    let ex = Executions::new().unwrap();
+    let saved_id = doc.id.clone();
+    let result = ex
+        .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.status, Some(200));
+    {
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let sent = sent_body(&requests[0]);
+        assert!(!sent.contains("\"old\": true"));
+        assert_eq!(sent.matches("/*").count(), 1);
+        assert!(sent.contains("\"name\": \"test/* */\""));
+        assert!(serde_json::from_str::<serde_json::Value>(sent).is_ok());
+    }
+    let saved = db.run(|c| repo::get_request(c, &saved_id)).unwrap();
+    assert_eq!(saved.body, "");
+    assert_eq!(saved.body_kind, "none");
+
+    for body in [
+        "{\"a\":1}/* unfinished",
+        "'/* unfinished",
+        "// /* unfinished",
+        "{\"a\":\"bad\\\n/* unfinished PRIVATE_TAIL",
+        "{\"a\":\"bad\\\r\n/* unfinished PRIVATE_TAIL",
+    ] {
+        doc.body = body.into();
+        let result = ex
+            .execute(prepare(&ex, doc.clone(), 5000), db.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, "error");
+        assert_eq!(result.error_code.as_deref(), Some("INVALID_INPUT"));
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
 }
 #[tokio::test]
 async fn large_utf8_is_bounded_and_html_remains_plain_text() {

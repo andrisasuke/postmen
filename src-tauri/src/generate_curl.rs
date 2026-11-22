@@ -8,6 +8,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+const CURL_ARGUMENT_LIMIT: usize = 64 * 1024;
+const CURL_CHUNK_LIMIT: usize = 32 * 1024;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Input {
@@ -40,6 +43,7 @@ pub fn generate(conn: &Connection, request: RequestDoc) -> AppResult<Output> {
     let url = http::compose_url(&doc)?;
     let headers = http::headers(&doc)?;
     let mut lines = vec!["curl --globoff".to_owned()];
+    let mut large_payload = None;
     if doc.method == "HEAD" {
         lines.push("--head".into());
     }
@@ -64,8 +68,14 @@ pub fn generate(conn: &Connection, request: RequestDoc) -> AppResult<Output> {
         lines.push(format!("--header {}", quote(&argument)));
     }
     if doc.body_kind == "json" {
-        no_nul(&doc.body)?;
-        lines.push(format!("--data-raw {}", quote(&doc.body)));
+        let payload = http::json_payload(&doc, &headers)?;
+        no_nul(&payload)?;
+        if payload.len() >= CURL_ARGUMENT_LIMIT {
+            large_payload = Some(payload.into_owned());
+            lines.push(format!("--data-binary {}", quote("@-")));
+        } else {
+            lines.push(format!("--data-raw {}", quote(&payload)));
+        }
     }
     if doc.body_kind == "multipart" {
         let files: HashMap<_, _> = repository::execution_resources(conn, &doc)?
@@ -131,9 +141,37 @@ pub fn generate(conn: &Connection, request: RequestDoc) -> AppResult<Output> {
             }
         }
     }
-    Ok(Output {
-        code: lines.join(" \\\n  "),
-    })
+    let command = lines.join(" \\\n  ");
+    let code = large_payload
+        .map(|payload| stdin_command(&payload, &command))
+        .unwrap_or(command);
+    Ok(Output { code })
+}
+
+fn utf8_chunks(value: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < value.len() {
+        let mut end = (start + CURL_CHUNK_LIMIT).min(value.len());
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&value[start..end]);
+        start = end;
+    }
+    chunks
+}
+
+fn stdin_command(payload: &str, command: &str) -> String {
+    let mut code = String::from("{\n");
+    for chunk in utf8_chunks(payload) {
+        code.push_str("  printf '%s' ");
+        code.push_str(&quote(chunk));
+        code.push('\n');
+    }
+    code.push_str("} | ");
+    code.push_str(command);
+    code
 }
 
 fn file_unavailable() -> AppError {

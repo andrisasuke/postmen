@@ -6,7 +6,8 @@ import {
   codeAppearance,
   jsonHighlighting,
 } from "../../services/editor-theme";
-import { formatResponse } from "../../services/response-format";
+import { jsonCommentDiagnostics, formatJsonBody } from "../../services/json-comments";
+import { jsonCommentSupport } from "../../services/json-language";
 import {
   EditorView,
   lineNumbers,
@@ -33,7 +34,6 @@ import {
   foldAll,
   unfoldAll,
 } from "@codemirror/language";
-import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { linter } from "@codemirror/lint";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { useSettingsStore } from "../../stores/settings";
@@ -61,6 +61,11 @@ let disposed = false;
 function appearance() {
   return codeAppearance(settings.resolvedTheme === "dark");
 }
+function requestJsonDiagnostics(view: EditorView) {
+  return jsonCommentDiagnostics(view.state.doc.toString()).map(
+    (diagnostic) => ({ ...diagnostic, severity: "error" as const }),
+  );
+}
 function freshState() {
   const length = props.modelValue.length;
   return EditorState.create({
@@ -70,7 +75,7 @@ function freshState() {
       Math.min(props.selection.head, length),
     ),
     extensions: [
-      json(),
+      jsonCommentSupport(),
       EditorView.lineWrapping,
       history(),
       lineNumbers(),
@@ -79,7 +84,7 @@ function freshState() {
       bracketMatching(),
       indentOnInput(),
       search({ top: true }),
-      linter(jsonParseLinter()),
+      linter(requestJsonDiagnostics),
       foldGutter({ openText: "▾", closedText: "▸" }),
       jsonHighlighting,
       EditorState.tabSize.of(2),
@@ -175,7 +180,12 @@ onBeforeUnmount(() => {
 function format() {
   if (!editor) return;
   try {
-    const formatted = formatResponse(editor.state.doc.toString());
+    const formatted = formatJsonBody(editor.state.doc.toString());
+    if (formatted.unterminated) {
+      message.value =
+        "Unclosed block comment. Close it with */ before formatting. The original body was kept.";
+      return;
+    }
     if (formatted.limited) {
       message.value =
         "Formatting safety limit reached. The original body was kept.";
