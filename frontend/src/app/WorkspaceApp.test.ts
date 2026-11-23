@@ -33,6 +33,7 @@ function shortcut(key: string) { window.dispatchEvent(new KeyboardEvent("keydown
 beforeEach(async () => {
   localStorage.clear(); vi.clearAllMocks(); native.generate.mockReset().mockResolvedValue({ code });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
   pinia = createPinia(); setActivePinia(pinia); api = createMemoryApi(); store = useWorkspaceStore(); await store.initialize(api);
   const c = await store.createCollection("Synthetic"); const parent = { collectionId: c.id, parentId: null };
@@ -46,7 +47,7 @@ beforeEach(async () => {
   } } });
   await flushPromises();
 });
-afterEach(() => { wrapper.unmount(); disposePinia(pinia); document.body.replaceChildren(); vi.unstubAllGlobals(); });
+afterEach(() => { (wrapper as VueWrapper | undefined)?.unmount(); disposePinia(pinia); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 it("generates the freshest unsaved snapshot and Copy never saves, sends or mutates drafts/history", async () => {
   const draft = store.tabs[a.id]!.draft;
@@ -166,18 +167,18 @@ it("restores the startup-visible request when execution becomes ready and restor
 });
 
 it("closes only other tabs after one target-scoped confirmation and persists the keep tab", async () => {
-  store.tabs[b.id]!.draft.body = "unsaved target";
+  store.tabs[a.id]!.draft.body = "unsaved target"; store.tabs[b.id]!.draft.body = "unsaved keep";
   const menu = wrapper.findAllComponents({ name: "UiMenu" }).find(item => item.props("label") === "Request tab actions")!;
   await wrapper.get(`[data-request-tab="${b.id}"]`).trigger("contextmenu", { clientX: 8, clientY: 8 });
   menu.vm.$emit("select", "close-others"); await flushPromises();
   const dialog = document.querySelector('[role="dialog"]')!;
-  expect(dialog.textContent).toContain(b.name);
-  expect(dialog.textContent).not.toContain(a.name);
+  expect(dialog.textContent).toContain(a.name);
+  expect(dialog.textContent).not.toContain(b.name);
   expect(store.tabIds).toEqual([a.id, b.id]);
   const discard = Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Discard and Close Others"))!;
   discard.click(); await flushPromises();
   expect(store.tabIds).toEqual([b.id]); expect(store.activeId).toBe(b.id);
-  expect(store.tabs[b.id]!.draft.body).toBe("unsaved target");
+  expect(store.tabs[b.id]!.draft.body).toBe("unsaved keep");
   expect(api.loadWorkspace && (await api.loadWorkspace()).session).toMatchObject({ tabIds: [b.id], activeId: b.id });
 });
 
@@ -192,7 +193,8 @@ it("keeps every tab and draft open when final session persistence fails", async 
   await flushPromises();
   expect(saveSession).toHaveBeenCalled(); expect(store.tabIds).toEqual([a.id, b.id]);
   expect(store.tabs[a.id]!.draft.body).toBe("preserve a"); expect(store.tabs[b.id]!.draft.body).toBe("preserve b");
-  expect(dialog.textContent).toContain("session unavailable");
+  expect(dialog.textContent).toContain("could not be saved");
+  expect(store.sessionError).toContain("session unavailable");
 });
 
 it("confirms target cancellation and preserves the kept tab execution", async () => {

@@ -26,6 +26,114 @@ export interface JsonDiagnostic {
   to: number;
   message: string;
 }
+export interface JsonDiagnosticDetail {
+  line: number;
+  column: number;
+  context: string;
+  pointer: number;
+  endOfInput: boolean;
+}
+
+const CONTEXT_LIMIT = 60;
+
+function isLineBreak(code: number) {
+  return code === 10 || code === 13;
+}
+
+// Fira Code renders CJK and emoji glyphs two cells wide. Count cells so the
+// caret stays under the offending character while columns stay UTF-16 based,
+// matching the editor's diagnostic offsets.
+function monospaceWidth(text: string) {
+  let width = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0)!;
+    if (
+      code === 0x200d ||
+      (code >= 0x0300 && code <= 0x036f) ||
+      (code >= 0xfe00 && code <= 0xfe0f)
+    )
+      continue;
+    width +=
+      code >= 0x1100 &&
+      (code <= 0x115f ||
+        code === 0x2329 ||
+        code === 0x232a ||
+        (code >= 0x2e80 && code <= 0xa4cf) ||
+        (code >= 0xac00 && code <= 0xd7a3) ||
+        (code >= 0xf900 && code <= 0xfaff) ||
+        (code >= 0xfe30 && code <= 0xfe6f) ||
+        (code >= 0xff00 && code <= 0xff60) ||
+        (code >= 0xffe0 && code <= 0xffe6) ||
+        (code >= 0x1f300 && code <= 0x1f64f) ||
+        (code >= 0x1f900 && code <= 0x1f9ff) ||
+        (code >= 0x20000 && code <= 0x3fffd))
+        ? 2
+        : 1;
+  }
+  return width;
+}
+
+// Count line breaks as CodeMirror does (CRLF is one break) so the display
+// location matches the editor line numbers even in the original, unmasked
+// document.
+function linePosition(text: string, offset: number) {
+  let line = 1;
+  let lineStart = 0;
+  for (let index = 0; index < offset; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 13) {
+      if (index + 1 < offset && text.charCodeAt(index + 1) === 10) index++;
+      line++;
+      lineStart = index + 1;
+    } else if (code === 10) {
+      line++;
+      lineStart = index + 1;
+    }
+  }
+  return { line, lineStart };
+}
+
+// Present the diagnostic offset as 1-based line/column plus a bounded source
+// excerpt. The excerpt keeps the pointer aligned for tabs and wide characters.
+export function describeJsonDiagnostic(
+  text: string,
+  diagnostic: JsonDiagnostic,
+): JsonDiagnosticDetail {
+  const length = text.length;
+  const endOfInput = diagnostic.from >= length;
+  let offset = Math.max(0, Math.min(diagnostic.from, length));
+  if (endOfInput) {
+    while (offset > 0 && isLineBreak(text.charCodeAt(offset - 1))) offset--;
+  }
+  const { line, lineStart } = linePosition(text, offset);
+  let lineEnd = offset;
+  while (lineEnd < length && !isLineBreak(text.charCodeAt(lineEnd))) lineEnd++;
+  const lineText = text.slice(lineStart, lineEnd).replace(/\t/g, " ");
+  const pointerIndex = Math.max(
+    0,
+    Math.min(offset - lineStart, lineText.length),
+  );
+  let context = lineText;
+  let pointer = monospaceWidth(lineText.slice(0, pointerIndex));
+  if (lineText.length > CONTEXT_LIMIT) {
+    const start = Math.min(
+      Math.max(0, pointerIndex - Math.floor(CONTEXT_LIMIT / 2)),
+      lineText.length - CONTEXT_LIMIT,
+    );
+    const prefix = start > 0 ? "…" : "";
+    const suffix = start + CONTEXT_LIMIT < lineText.length ? "…" : "";
+    pointer = monospaceWidth(prefix + lineText.slice(start, pointerIndex));
+    context =
+      prefix + lineText.slice(start, start + CONTEXT_LIMIT) + suffix;
+  }
+  return {
+    line,
+    column: offset - lineStart + 1,
+    context,
+    pointer,
+    endOfInput,
+  };
+}
 
 type ActiveKind = "open" | "close" | "colon" | "comma" | "scalar";
 interface ActiveLeaf {
