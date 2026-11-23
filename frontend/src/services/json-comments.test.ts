@@ -429,7 +429,23 @@ describe("JSON diagnostic detail", () => {
     const detail = at(text, "kk");
     expect(detail.line).toBe(2);
     expect(detail.context).toBe('  "日": kk');
-    expect(detail.pointer).toBe(8);
+    expect(detail.pointer).toBe(text.split("\n")[1]!.indexOf("k"));
+    expect(detail.context[detail.pointer]).toBe("k");
+  });
+
+  it("points at the offending token after emoji and ZWJ keys", () => {
+    for (const key of ["🚀", "👨‍👩‍👧"]) {
+      const text = `{"${key}": kk}`;
+      const diagnostic = jsonCommentDiagnostics(text)[0]!;
+      const detail = describeJsonDiagnostic(text, diagnostic);
+      expect(detail.line).toBe(1);
+      expect(detail.column).toBe(diagnostic.from + 1);
+      // The caret is inserted inline before the indexed character, so the
+      // rendered alignment is independent of glyph widths (rocket is two
+      // cells in Fira Code, the ZWJ family one glyph).
+      expect(detail.pointer).toBe(diagnostic.from);
+      expect(detail.context[detail.pointer]).toBe("k");
+    }
   });
 
   it("marks the end of input on the last relevant line", () => {

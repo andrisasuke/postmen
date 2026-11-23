@@ -510,7 +510,7 @@ select:focus-visible {
   line-height: 1.5;
   white-space: pre;
 }
-.json-error-empty,
+
 .json-error-note,
 .json-error-message {
   margin: 0;

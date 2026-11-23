@@ -200,16 +200,12 @@ function appearance() {
   return codeAppearance(settings.resolvedTheme === "dark");
 }
 function publishJsonDiagnostics(view: EditorView) {
-  view.dispatch({
-    effects: setJsonDiagnostics.of(
-      jsonCommentDiagnostics(view.state.doc.toString()),
-    ),
-  });
-}
-function requestJsonDiagnostics(view: EditorView) {
   const diagnostics = jsonCommentDiagnostics(view.state.doc.toString());
   view.dispatch({ effects: setJsonDiagnostics.of(diagnostics) });
-  return diagnostics.map((diagnostic) => ({
+  return diagnostics;
+}
+function requestJsonDiagnostics(view: EditorView) {
+  return publishJsonDiagnostics(view).map((diagnostic) => ({
     ...diagnostic,
     severity: "error" as const,
   }));
@@ -482,13 +478,12 @@ defineExpose({
           Parse error on line {{ errorTip.detail.line }}, column
           {{ errorTip.detail.column }}
         </p>
-        <div v-if="errorTip.detail.context" class="json-error-source">
-          <div class="json-error-code">{{ errorTip.detail.context }}</div>
+        <div class="json-error-source">
+          <div class="json-error-code">{{ errorTip.detail.context || " " }}</div>
           <div class="json-error-code">
-            {{ " ".repeat(errorTip.detail.pointer) }}^
+            {{ errorTip.detail.context.slice(0, errorTip.detail.pointer) }}^
           </div>
         </div>
-        <p v-else class="json-error-empty">(empty line)</p>
         <p v-if="errorTip.detail.endOfInput" class="json-error-note">
           Error at end of input.
         </p>

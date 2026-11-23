@@ -260,6 +260,63 @@ test("invalid JSON marks the original line and shows a safe parse-error detail",
   await expect(tooltip).toHaveCount(0);
 });
 
+test("empty and emoji bodies still show the parse-error caret in the tooltip", async ({
+  page,
+}) => {
+  const editor = page.getByTestId("json-editor-input");
+  const marker = page
+    .getByTestId("json-editor")
+    .locator(".cm-lineNumbers .cm-gutterElement.cm-json-error-gutter");
+  const tooltip = page.getByTestId("json-error-tooltip");
+
+  await editor.fill("");
+  await expect(marker).toHaveText("1");
+  await marker.hover();
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Parse error on line 1, column 1");
+  await expect(tooltip).toContainText("Error at end of input.");
+  await expect(
+    tooltip.locator(".json-error-source .json-error-code"),
+  ).toHaveCount(2);
+  await expect(
+    tooltip.locator(".json-error-source .json-error-code").nth(1),
+  ).toHaveText("^");
+
+  for (const body of ['{"🚀": kk}', '{"👨‍👩‍👧": kk}']) {
+    await editor.fill(body);
+    await expect(marker).toHaveText("1");
+    // Chromium skips pointerover when the pointer never left the marker.
+    await page.mouse.move(0, 0);
+    await marker.hover();
+    await expect(tooltip).toContainText(body);
+    // The caret is rendered inline after the exact context prefix, so in the
+    // real font it lines up with the offending character instead of relying
+    // on width heuristics for wide emoji or ZWJ sequences.
+    const aligned = await tooltip.evaluate((tip) => {
+      const codes = tip.querySelectorAll(".json-error-code");
+      const xOf = (element: Element, needle: string) => {
+        for (const node of element.childNodes) {
+          const at = (node.textContent ?? "").indexOf(needle);
+          if (at >= 0) {
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 1);
+            return range.getBoundingClientRect().left;
+          }
+        }
+        return null;
+      };
+      const contextX = xOf(codes[0]!, "k");
+      const caretX = xOf(codes[1]!, "^");
+      return contextX === null || caretX === null
+        ? null
+        : Math.abs(contextX - caretX);
+    });
+    expect(aligned).not.toBeNull();
+    expect(aligned!).toBeLessThan(1);
+  }
+});
+
 test("Prettify on invalid JSON shows the marker without changing body or history", async ({
   page,
 }) => {
