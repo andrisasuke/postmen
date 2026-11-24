@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { reactive } from "vue";
 import ImportCollectionDialog from "./ImportCollectionDialog.vue";
@@ -16,7 +16,7 @@ let wrapper: VueWrapper;
 const target = "target";
 const preview = { token: "token", name: "Sample API Collection", requestCount: 2, folderCount: 0, variableCount: 0, warnings: ["Scripts are not executed."] };
 let store: { environmentBusy: boolean; tabs: Record<string, { saving: boolean }>; dirty: ReturnType<typeof vi.fn>; descendants: ReturnType<typeof vi.fn>; applyImportedCollection: ReturnType<typeof vi.fn> };
-let executions: { activeIds: string[]; states: Record<string, unknown> };
+let executions: { activeIds: string[]; states: Record<string, unknown>; discard: Mock };
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent.trim() === label)!;
 const pick = async () => { document.querySelector<HTMLButtonElement>(".collection-dropzone")!.click(); await flushPromises(); };
 async function collide() {
@@ -28,7 +28,8 @@ beforeEach(async () => {
   api.pick.mockReset().mockResolvedValue(preview); api.drop.mockReset().mockResolvedValue(preview);
   api.commit.mockReset(); api.discard.mockReset().mockResolvedValue(null);
   store = reactive({ environmentBusy: false, tabs: {}, dirty: vi.fn().mockReturnValue(false), descendants: vi.fn().mockReturnValue(["old"]), applyImportedCollection: vi.fn() });
-  executions = reactive({ activeIds: [], states: { old: { phase: "done" } } });
+  executions = reactive({ activeIds: [], states: { old: { phase: "done" }, keep: { phase: "done" } }, discard: vi.fn() });
+  executions.discard.mockImplementation((id: string) => { delete executions.states[id]; });
   hooks.workspace.mockReturnValue(store); hooks.execution.mockReturnValue(executions);
   wrapper = mount(ImportCollectionDialog, { attachTo: document.body });
   await flushPromises();
@@ -68,7 +69,9 @@ it("blocks overwrite for dirty drafts and running requests, then replaces only t
   api.commit.mockResolvedValueOnce({ status: "imported", collectionId: target, replacedId: target, workspace: emptyWorkspace() });
   button("Overwrite & Import").click(); await flushPromises();
   expect(api.commit).toHaveBeenLastCalledWith("token", "overwrite", target);
+  expect(executions.discard).toHaveBeenCalledExactlyOnceWith("old");
   expect(executions.states.old).toBeUndefined();
+  expect(executions.states.keep).toEqual({ phase: "done" });
 });
 it("accepts one dropped file, rejects multiple files and prevents default navigation", async () => {
   const file = new File(["{}"], "collection.json");

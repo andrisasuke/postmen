@@ -478,6 +478,49 @@ select:focus-visible {
   overflow: hidden;
   margin: 16px 16px 0;
 }
+.json-error-tooltip {
+  position: fixed;
+  z-index: 70;
+  max-width: min(480px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--menu-bg);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.24);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.json-error-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--delete);
+}
+.json-error-source {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  overflow-x: auto;
+}
+.json-error-code {
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.json-error-note,
+.json-error-message {
+  margin: 0;
+}
+.json-error-note {
+  color: var(--muted);
+}
+.json-error-message {
+  overflow-wrap: anywhere;
+}
 .cm-editor.cm-focused {
   outline: none;
 }

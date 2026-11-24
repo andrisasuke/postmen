@@ -42,6 +42,14 @@ export function codeAppearance(dark: boolean) {
         minWidth: "24px",
         textAlign: "left",
       },
+      ".cm-lineNumbers .cm-gutterElement.cm-json-error-gutter": {
+        color: "var(--delete)",
+        cursor: "help",
+      },
+      ".cm-lineNumbers .cm-gutterElement.cm-json-error-gutter:focus-visible": {
+        outline: "1px solid var(--delete)",
+        outlineOffset: "-1px",
+      },
       ".cm-foldGutter .cm-gutterElement": {
         padding: "0",
         width: "13px",

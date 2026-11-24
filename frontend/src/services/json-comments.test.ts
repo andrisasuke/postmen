@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { jsonLanguage } from "@codemirror/lang-json";
 import {
+  describeJsonDiagnostic,
   formatJsonBody,
   jsonCommentDiagnostics,
   maskBlockComments,
@@ -383,5 +384,131 @@ describe("request JSON block comments", () => {
       limited: false,
       unterminated: false,
     });
+  });
+});
+
+describe("JSON diagnostic detail", () => {
+  function at(text: string, needle: string) {
+    const from = text.indexOf(needle);
+    expect(from).toBeGreaterThanOrEqual(0);
+    return describeJsonDiagnostic(text, {
+      from,
+      to: from + needle.length,
+      message: "Invalid JSON.",
+    });
+  }
+
+  it("reports the 1-based line and line excerpt around the offset", () => {
+    const text = '{\n  "bad": kk\n}';
+    const detail = at(text, "kk");
+    expect(detail.line).toBe(2);
+    expect(detail.column).toBe(10);
+    expect(detail.context).toBe('  "bad": kk');
+    expect(detail.context[detail.pointer]).toBe("k");
+    expect(detail.endOfInput).toBe(false);
+  });
+
+  it("keeps original line numbers after multi-line block comments", () => {
+    const text = '{\n/* first\n   second */\n"a": 1\n"b": kk\n}';
+    const detail = at(text, "kk");
+    expect(detail.line).toBe(5);
+    expect(detail.context).toBe('"b": kk');
+    expect(detail.context[detail.pointer]).toBe("k");
+  });
+
+  it("counts CRLF as one line break", () => {
+    const text = '{\r\n  "a": 1\r\n  bad: 2\r\n}';
+    const detail = at(text, "bad");
+    expect(detail.line).toBe(3);
+    expect(detail.column).toBe(3);
+    expect(detail.context).toBe("  bad: 2");
+  });
+
+  it("keeps the pointer on Unicode lines", () => {
+    const text = '{\n  "日": kk\n}';
+    const detail = at(text, "kk");
+    expect(detail.line).toBe(2);
+    expect(detail.context).toBe('  "日": kk');
+    expect(detail.pointer).toBe(text.split("\n")[1]!.indexOf("k"));
+    expect(detail.context[detail.pointer]).toBe("k");
+  });
+
+  it("points at the offending token after emoji and ZWJ keys", () => {
+    for (const key of ["🚀", "👨‍👩‍👧"]) {
+      const text = `{"${key}": kk}`;
+      const diagnostic = jsonCommentDiagnostics(text)[0]!;
+      const detail = describeJsonDiagnostic(text, diagnostic);
+      expect(detail.line).toBe(1);
+      expect(detail.column).toBe(diagnostic.from + 1);
+      // The caret is inserted inline before the indexed character, so the
+      // rendered alignment is independent of glyph widths (rocket is two
+      // cells in Fira Code, the ZWJ family one glyph).
+      expect(detail.pointer).toBe(diagnostic.from);
+      expect(detail.context[detail.pointer]).toBe("k");
+    }
+  });
+
+  it("marks the end of input on the last relevant line", () => {
+    for (const text of ['{\n  "a": 1', '{\n  "a": 1\n', '{\n  "a": 1\n\n']) {
+      const detail = describeJsonDiagnostic(text, {
+        from: text.length,
+        to: text.length,
+        message: "Unexpected end of JSON input",
+      });
+      expect(detail.endOfInput).toBe(true);
+      expect(detail.line).toBe(2);
+      expect(detail.context).toBe('  "a": 1');
+      expect(detail.pointer).toBe(detail.context.length);
+      expect(detail.column).toBe(detail.context.length + 1);
+    }
+    const empty = describeJsonDiagnostic("", {
+      from: 0,
+      to: 0,
+      message: "Unexpected end of JSON input",
+    });
+    expect(empty).toMatchObject({
+      line: 1,
+      column: 1,
+      context: "",
+      pointer: 0,
+      endOfInput: true,
+    });
+  });
+
+  it("bounds long lines and keeps the caret on the error", () => {
+    const line = "x".repeat(200) + "bad";
+    const text = `{"a":1}\n${line}`;
+    const detail = at(text, "bad");
+    expect(detail.line).toBe(2);
+    expect(detail.context.length).toBeLessThanOrEqual(62);
+    expect(detail.context.startsWith("…")).toBe(true);
+    expect(detail.context[detail.pointer]).toBe("b");
+  });
+
+  it("describes parser diagnostics from the original document", () => {
+    const invalid = '{\n/* note\n   spanning */\n"a": 1,\n"b": kk\n}';
+    const diagnostic = jsonCommentDiagnostics(invalid)[0]!;
+    const detail = describeJsonDiagnostic(invalid, diagnostic);
+    expect(detail.line).toBe(5);
+    expect(detail.context).toBe('"b": kk');
+    expect(detail.context[detail.pointer]).toBe("k");
+  });
+
+  it("describes unclosed block comments and end-of-input errors", () => {
+    const unclosed = '{\n"a": 1\n/* unfinished';
+    const unclosedDiagnostic = jsonCommentDiagnostics(unclosed)[0]!;
+    const unclosedDetail = describeJsonDiagnostic(unclosed, unclosedDiagnostic);
+    expect(unclosedDetail.line).toBe(3);
+    expect(unclosedDetail.context).toBe("/* unfinished");
+    expect(unclosedDetail.context[unclosedDetail.pointer]).toBe("/");
+
+    const truncated = '{\n  "a": 1';
+    const eofDetail = describeJsonDiagnostic(
+      truncated,
+      jsonCommentDiagnostics(truncated)[0]!,
+    );
+    expect(eofDetail.line).toBe(2);
+    expect(eofDetail.endOfInput).toBe(true);
+    expect(eofDetail.context).toBe('  "a": 1');
   });
 });

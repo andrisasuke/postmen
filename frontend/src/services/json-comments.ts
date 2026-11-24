@@ -26,6 +26,86 @@ export interface JsonDiagnostic {
   to: number;
   message: string;
 }
+export interface JsonDiagnosticDetail {
+  line: number;
+  column: number;
+  context: string;
+  pointer: number;
+  endOfInput: boolean;
+}
+
+const CONTEXT_LIMIT = 60;
+
+function isLineBreak(code: number) {
+  return code === 10 || code === 13;
+}
+
+// The tooltip renders the caret inline right before the offending character,
+// so no per-glyph width table is needed: emoji, ZWJ sequences and tabs all
+// line up by construction.
+
+// Count line breaks as CodeMirror does (CRLF is one break) so the display
+// location matches the editor line numbers even in the original, unmasked
+// document.
+function linePosition(text: string, offset: number) {
+  let line = 1;
+  let lineStart = 0;
+  for (let index = 0; index < offset; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 13) {
+      if (index + 1 < offset && text.charCodeAt(index + 1) === 10) index++;
+      line++;
+      lineStart = index + 1;
+    } else if (code === 10) {
+      line++;
+      lineStart = index + 1;
+    }
+  }
+  return { line, lineStart };
+}
+
+// Present the diagnostic offset as 1-based line/column plus a bounded source
+// excerpt. `pointer` is a character index into `context` where the tooltip
+// inserts its caret inline, so alignment survives emoji, ZWJ and tabs.
+export function describeJsonDiagnostic(
+  text: string,
+  diagnostic: JsonDiagnostic,
+): JsonDiagnosticDetail {
+  const length = text.length;
+  const endOfInput = diagnostic.from >= length;
+  let offset = Math.max(0, Math.min(diagnostic.from, length));
+  if (endOfInput) {
+    while (offset > 0 && isLineBreak(text.charCodeAt(offset - 1))) offset--;
+  }
+  const { line, lineStart } = linePosition(text, offset);
+  let lineEnd = offset;
+  while (lineEnd < length && !isLineBreak(text.charCodeAt(lineEnd))) lineEnd++;
+  const lineText = text.slice(lineStart, lineEnd).replace(/\t/g, " ");
+  const pointerIndex = Math.max(
+    0,
+    Math.min(offset - lineStart, lineText.length),
+  );
+  let context = lineText;
+  let pointer = pointerIndex;
+  if (lineText.length > CONTEXT_LIMIT) {
+    const start = Math.min(
+      Math.max(0, pointerIndex - Math.floor(CONTEXT_LIMIT / 2)),
+      lineText.length - CONTEXT_LIMIT,
+    );
+    const prefix = start > 0 ? "…" : "";
+    const suffix = start + CONTEXT_LIMIT < lineText.length ? "…" : "";
+    pointer = pointerIndex - start + prefix.length;
+    context =
+      prefix + lineText.slice(start, start + CONTEXT_LIMIT) + suffix;
+  }
+  return {
+    line,
+    column: offset - lineStart + 1,
+    context,
+    pointer,
+    endOfInput,
+  };
+}
 
 type ActiveKind = "open" | "close" | "colon" | "comma" | "scalar";
 interface ActiveLeaf {
